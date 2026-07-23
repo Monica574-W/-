@@ -25,6 +25,17 @@
   ];
   function channelName(id) { var c = CHANNELS.filter(function (c) { return c.id === id; })[0]; return c ? c.name : ''; }
 
+  var ASSET_CATEGORIES = [
+    { id: 'cash', name: '现金', icon: '💵', tracksDep: false },
+    { id: 'bank', name: '银行存款', icon: '🏦', tracksDep: false },
+    { id: 'electronics', name: '电子设备', icon: '💻', tracksDep: true },
+    { id: 'furniture', name: '家居物品', icon: '🛋️', tracksDep: true },
+    { id: 'vehicle', name: '车辆', icon: '🚗', tracksDep: true },
+    { id: 'valuables', name: '收藏/贵重物品', icon: '💎', tracksDep: true },
+    { id: 'other', name: '其他物品', icon: '📦', tracksDep: true }
+  ];
+  function assetCatById(id) { return ASSET_CATEGORIES.filter(function (c) { return c.id === id; })[0] || ASSET_CATEGORIES[ASSET_CATEGORIES.length - 1]; }
+
   /* ---------- 账单导入：分类关键词猜测 ---------- */
   var CATEGORY_KEYWORDS = {
     food: ['餐', '美团', '饿了么', '肯德基', '麦当劳', '星巴克', '咖啡', '奶茶', '外卖', '食', '菜市场', '生鲜'],
@@ -211,7 +222,7 @@
       assets: [],
       nextAssetId: 6,
       avatarImg: null, wallpaperImg: null,
-      newAsset: { name: '', category: '电子设备', buy: '', current: '', dateStr: '', uses: '' },
+      newAsset: { name: '', category: 'electronics', buy: '', current: '', dateStr: '', uses: '' },
       streakStart: todayISO(),
       categories: DEFAULT_CATS.map(function (c) { return Object.assign({}, c); }),
       newCategoryName: '', newCategoryHue: 195,
@@ -249,7 +260,7 @@
         remindOnOpen: saved.remindOnOpen !== false,
         reminderDismissedDate: saved.reminderDismissedDate || null,
         budgetLimits: Object.assign({}, DEFAULT_BUDGET_LIMITS, saved.budgetLimits || {}),
-        newAsset: saved.newAsset || { name: '', category: '电子设备', buy: '', current: '', dateStr: '', uses: '' },
+        newAsset: saved.newAsset || { name: '', category: 'electronics', buy: '', current: '', dateStr: '', uses: '' },
         categories: (saved.categories && saved.categories.length) ? saved.categories : DEFAULT_CATS.map(function (c) { return Object.assign({}, c); }),
         txList: Object.assign({ search: '', type: 'all', cat: 'all', monthKey: 'all' }, saved.txList || {}),
         security: Object.assign({ pinEnabled: false, pinCode: null }, saved.security || {}),
@@ -454,6 +465,7 @@
     });
 
     var assetsList = s.assets.map(function (a) {
+      var catInfo = assetCatById(a.category);
       var depTotal = a.buy - a.current;
       var days = Math.round(a.years * 365) || 1;
       var method = s.depMethods[a.id] || 'years';
@@ -468,11 +480,18 @@
       var py = pill('years'), pd = pill('days'), pu = pill('uses');
       return Object.assign({}, a, {
         buyFmt: fmt(a.buy), currentFmt: fmt(a.current),
-        initial: a.name.charAt(0), iconBg: hue(230, 68, 0.13),
+        catName: catInfo.name, catIcon: catInfo.icon, tracksDep: catInfo.tracksDep,
+        iconBg: hue(230, 68, 0.13),
         depTotalFmt: fmt(depTotal), depRateFmt: r.label + '折旧 ' + fmt(rateVal) + '/' + r.unit,
         yearsBg: py.bg, yearsColor: py.color, daysBg: pd.bg, daysColor: pd.color, usesBg: pu.bg, usesColor: pu.color
       });
     });
+
+    var assetCatBreakdown = ASSET_CATEGORIES.map(function (c) {
+      var list = s.assets.filter(function (a) { return a.category === c.id; });
+      var total = list.reduce(function (sum, a) { return sum + a.current; }, 0);
+      return { id: c.id, name: c.name, icon: c.icon, count: list.length, total: total, totalFmt: fmt(total) };
+    }).filter(function (c) { return c.count > 0; });
 
     var txCatSource = s.txType === 'expense' ? cats() : INCOME_CATS;
     var txCategoryOptions = txCatSource.map(function (c) {
@@ -492,8 +511,7 @@
       totalLimit: totalLimit, totalSpent: totalSpent,
       assetsTotalFmt: fmt(assetsTotal), assetsBuyFmt: fmt(assetsBuy), assetsDiffFmt: (assetsDiffPct >= 0 ? '+' : '') + assetsDiffPct + '%',
       assetsDepTotalFmt: fmt(assetsBuy - assetsTotal),
-      assetsCountElectronics: s.assets.filter(function (a) { return a.category === '电子设备'; }).length,
-      assetsCountOther: s.assets.filter(function (a) { return a.category !== '电子设备'; }).length,
+      assetCatBreakdown: assetCatBreakdown,
       recentTx: recentTx, homeBudgetsList: homeBudgetsList,
       reportMonthLabel: months[repIdx].label, reportStats: reportStats, insights: insights,
       reportMonthIncomeFmt: fmt(reportStats.income), reportMonthExpenseFmt: fmt(reportStats.expense),
@@ -548,7 +566,7 @@
     return '<div style="flex:1;overflow-y:auto;padding-top:calc(env(safe-area-inset-top,0px) + 20px);">'
       + '<div style="padding:0 20px 4px;display:flex;align-items:center;justify-content:space-between;">'
       + '<div><div style="font-size:12px;color:var(--text-mute);letter-spacing:.04em;">' + monthsWindow(1)[0].year + '年' + monthsWindow(1)[0].month + '月 · 早上好</div>'
-      + '<div style="font-size:20px;font-weight:800;margin-top:2px;">策方 Ledger</div></div>'
+      + '<div style="font-size:20px;font-weight:800;margin-top:2px;">' + (state.userName ? esc(state.userName) : '我的账本') + '</div></div>'
       + '<div data-act="setTab" data-arg="profile" class="dc-btn" style="flex-shrink:0;">' + avatarBlock(d, 38) + '</div>'
       + '</div>'
 
@@ -692,23 +710,34 @@
 
   function renderAssets(d) {
     var rows = d.assetsList.length ? d.assetsList.map(function (a) {
+      var depSection = a.tracksDep
+        ? ('<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid color-mix(in oklch, var(--border) 50%, transparent);">'
+          + '<div style="font-size:11px;color:oklch(66% 0.19 25);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;margin-right:8px;">折旧' + a.depTotalFmt + ' · ' + a.depRateFmt + '</div>'
+          + '<div style="display:flex;gap:4px;background:var(--surface2);border-radius:100px;padding:3px;flex-shrink:0;">'
+          + '<div data-act="setDepMethod" data-arg="' + a.id + '|years" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.yearsBg + ';color:' + a.yearsColor + ';">年</div>'
+          + '<div data-act="setDepMethod" data-arg="' + a.id + '|days" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.daysBg + ';color:' + a.daysColor + ';">天</div>'
+          + '<div data-act="setDepMethod" data-arg="' + a.id + '|uses" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.usesBg + ';color:' + a.usesColor + ';">次</div>'
+          + '</div></div>')
+        : '';
       return '<div style="background:var(--surface);border-radius:16px;padding:14px;">'
         + '<div style="display:flex;gap:12px;align-items:center;">'
-        + '<div style="width:42px;height:42px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#0b1220;background:' + a.iconBg + ';">' + esc(a.initial) + '</div>'
+        + '<div style="width:42px;height:42px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:19px;background:' + a.iconBg + ';">' + a.catIcon + '</div>'
         + '<div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;">' + esc(a.name) + '</div>'
-        + '<div style="font-size:11px;color:var(--text-faint);margin-top:2px;">' + esc(a.category) + ' · 已用' + a.years + '年</div></div>'
+        + '<div style="font-size:11px;color:var(--text-faint);margin-top:2px;">' + esc(a.catName) + (a.tracksDep ? ' · 已用' + a.years + '年' : '') + '</div></div>'
         + '<div style="text-align:right;flex-shrink:0;"><div style="font-family:var(--font-mono);font-size:14px;font-weight:700;">' + a.currentFmt + '</div>'
-        + '<div style="font-size:10.5px;color:var(--text-faint);margin-top:2px;">购入 ' + a.buyFmt + '</div></div>'
+        + (a.tracksDep ? '<div style="font-size:10.5px;color:var(--text-faint);margin-top:2px;">购入 ' + a.buyFmt + '</div>' : '')
+        + '</div>'
         + '<div data-act="deleteAsset" data-arg="' + a.id + '" class="dc-btn" style="font-size:15px;color:var(--text-faint);padding:0 0 0 8px;">×</div>'
         + '</div>'
-        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid color-mix(in oklch, var(--border) 50%, transparent);">'
-        + '<div style="font-size:11px;color:oklch(66% 0.19 25);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;margin-right:8px;">折旧' + a.depTotalFmt + ' · ' + a.depRateFmt + '</div>'
-        + '<div style="display:flex;gap:4px;background:var(--surface2);border-radius:100px;padding:3px;flex-shrink:0;">'
-        + '<div data-act="setDepMethod" data-arg="' + a.id + '|years" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.yearsBg + ';color:' + a.yearsColor + ';">年</div>'
-        + '<div data-act="setDepMethod" data-arg="' + a.id + '|days" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.daysBg + ';color:' + a.daysColor + ';">天</div>'
-        + '<div data-act="setDepMethod" data-arg="' + a.id + '|uses" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.usesBg + ';color:' + a.usesColor + ';">次</div>'
-        + '</div></div></div>';
+        + depSection + '</div>';
     }).join('') : '<div style="padding:24px;text-align:center;color:var(--text-mute);font-size:12.5px;">还没有资产记录</div>';
+
+    var breakdownHtml = d.assetCatBreakdown.length ? d.assetCatBreakdown.map(function (c) {
+      return '<div style="flex:1;min-width:88px;background:var(--surface);border-radius:14px;padding:12px;text-align:center;">'
+        + '<div style="font-size:18px;">' + c.icon + '</div>'
+        + '<div style="font-family:var(--font-mono);font-size:13px;font-weight:700;margin-top:4px;">' + c.totalFmt + '</div>'
+        + '<div style="font-size:10.5px;color:var(--text-mute);margin-top:2px;">' + esc(c.name) + ' · ' + c.count + '项</div></div>';
+    }).join('') : '';
 
     return '<div style="flex:1;overflow-y:auto;padding-top:calc(env(safe-area-inset-top,0px) + 20px);">'
       + '<div style="padding:0 20px;font-size:20px;font-weight:800;">资产清单</div>'
@@ -716,10 +745,7 @@
       + '<div style="font-size:11.5px;color:var(--text-mute);">资产现值合计</div>'
       + '<div style="font-family:var(--font-mono);font-size:28px;font-weight:700;margin-top:4px;">' + d.assetsTotalFmt + '</div>'
       + '<div style="font-size:12px;color:var(--text-mute);margin-top:6px;">购入总值 ' + d.assetsBuyFmt + ' · 总折旧 ' + d.assetsDepTotalFmt + '（' + d.assetsDiffFmt + '）</div></div>'
-      + '<div style="display:flex;gap:12px;margin:14px 20px 0;">'
-      + '<div style="flex:1;background:var(--surface);border-radius:14px;padding:12px;text-align:center;"><div style="font-size:16px;font-weight:700;">' + d.assetsCountElectronics + '</div><div style="font-size:11px;color:var(--text-mute);margin-top:2px;">电子设备</div></div>'
-      + '<div style="flex:1;background:var(--surface);border-radius:14px;padding:12px;text-align:center;"><div style="font-size:16px;font-weight:700;">' + d.assetsCountOther + '</div><div style="font-size:11px;color:var(--text-mute);margin-top:2px;">其他资产</div></div>'
-      + '</div>'
+      + (breakdownHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 20px 0;">' + breakdownHtml + '</div>') : '')
       + '<div style="margin:16px 20px 8px;font-size:14px;font-weight:700;">全部资产</div>'
       + '<div style="margin:0 20px;display:flex;flex-direction:column;gap:10px;">' + rows + '</div>'
       + '<div data-act="openAddAsset" class="dc-btn" style="margin:16px 20px 0;border:1.5px dashed var(--border);border-radius:16px;padding:14px;text-align:center;font-size:13px;color:var(--text-mute);">+ 添加资产</div>'
@@ -811,16 +837,6 @@
         + '<div style="height:6px;border-radius:3px;background:var(--track);margin-top:10px;overflow:hidden;"><div style="height:100%;border-radius:3px;width:' + b.pctFmt + ';background:' + b.color + ';"></div></div></div>';
     }).join('');
 
-    var editRows = d.periodBudgetsList.map(function (b) {
-      return '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border-radius:14px;padding:12px 14px;">'
-        + '<div style="display:flex;align-items:center;gap:8px;"><div style="width:9px;height:9px;border-radius:2px;background:' + b.color + ';"></div><div style="font-size:13.5px;font-weight:600;">' + esc(b.catName) + '</div></div>'
-        + '<div style="display:flex;align-items:center;gap:10px;">'
-        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|-100" class="dc-btn" style="width:26px;height:26px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:16px;">−</div>'
-        + '<div style="font-family:var(--font-mono);font-size:13px;font-weight:700;min-width:64px;text-align:center;">' + b.limitFmt + '</div>'
-        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|100" class="dc-btn" style="width:26px;height:26px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:16px;">+</div>'
-        + '</div></div>';
-    }).join('');
-
     var piggyHistoryHtml = state.piggyHistory.map(function (h) {
       return '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-faint);margin-top:6px;"><div>' + esc(h.label) + ' 存入</div><div style="font-family:var(--font-mono);">+' + fmt(h.amount) + '</div></div>';
     }).join('');
@@ -837,9 +853,11 @@
       + '<div style="margin:16px 20px 0;display:flex;align-items:center;gap:20px;background:var(--surface);border-radius:20px;padding:20px;">'
       + '<div style="width:96px;height:96px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;position:relative;background:' + d.periodRingBg + ';">'
       + '<div style="width:70px;height:70px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;">' + d.periodPctFmt + '</div></div>'
-      + '<div><div style="font-size:11.5px;color:var(--text-mute);">已用 / 预算总额</div>'
+      + '<div style="flex:1;"><div style="font-size:11.5px;color:var(--text-mute);">已用 / 预算总额</div>'
       + '<div style="font-family:var(--font-mono);font-size:14px;font-weight:700;margin-top:4px;white-space:nowrap;">' + d.periodSpentFmt + ' / ' + d.periodLimitFmt + '</div>'
-      + '<div style="font-size:12px;color:var(--text-mute);margin-top:8px;">剩余 ' + d.periodRemainFmt + '</div></div></div>'
+      + '<div style="font-size:12px;color:var(--text-mute);margin-top:8px;">剩余 ' + d.periodRemainFmt + '</div></div>'
+      + '<div data-act="openOverlay" data-arg="editBudget" class="dc-btn" style="flex-shrink:0;font-size:12px;font-weight:700;padding:9px 14px;border-radius:100px;background:' + d.accent + ';color:#0b1220;white-space:nowrap;">编辑预算</div>'
+      + '</div>'
 
       + '<div style="margin:18px 20px 0;background:var(--surface);border-radius:18px;padding:16px;">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;"><div style="font-size:13px;font-weight:700;">存钱罐</div><div style="font-size:11px;color:var(--text-mute);">目标 ' + d.piggyGoalFmt + '</div></div>'
@@ -852,7 +870,7 @@
 
       + '<div style="margin:18px 20px 8px;display:flex;align-items:center;justify-content:space-between;">'
       + '<div style="font-size:14px;font-weight:700;">分类预算</div>'
-      + '<div data-act="openOverlay" data-arg="editBudget" class="dc-btn" style="font-size:12px;color:var(--text-mute);">编辑预算 ›</div></div>'
+      + '<div data-act="openOverlay" data-arg="editBudget" class="dc-btn" style="font-size:12px;font-weight:700;color:' + d.accent + ';">编辑 ›</div></div>'
       + '<div style="margin:0 20px;display:flex;flex-direction:column;gap:10px;">' + rows + '</div>'
       + '<div style="height:110px;"></div></div>';
   }
@@ -949,12 +967,27 @@
       + '<div style="height:110px;"></div></div>';
   }
 
+  function fullPageBackgroundLayer(d) {
+    var inner = '';
+    if (d.skinIsPhoto) {
+      if (!state.wallpaperImg) return '';
+      inner = '<div style="position:absolute;inset:0;background-image:url(' + state.wallpaperImg + ');background-size:cover;background-position:center;"></div>';
+    } else {
+      inner = '<div style="position:absolute;inset:0;background:' + d.heroBg + ';"></div>';
+    }
+    var dimOpacity = state.mode === 'light' ? 0.78 : 0.68;
+    return '<div style="position:absolute;inset:0;z-index:0;overflow:hidden;">'
+      + inner
+      + '<div style="position:absolute;inset:0;background:var(--bg);opacity:' + dimOpacity + ';"></div>'
+      + '</div>';
+  }
+
   function renderTabBar() {
     var accent = hue(state.accentHue, 72, 0.14);
     function dot(tab) { return state.tab === tab ? accent : 'transparent'; }
     function label(tab) { return state.tab === tab ? accent : 'var(--text-mute)'; }
     var fabBg = 'linear-gradient(135deg, ' + accent + ', ' + hue(state.accentHue, 55, 0.14) + ')';
-    return '<div class="safe-bottom" style="position:relative;z-index:5;display:flex;align-items:center;justify-content:space-around;padding:10px 8px 10px;background:var(--tabbar);backdrop-filter:blur(16px);border-top:1px solid color-mix(in oklch, var(--border) 50%, transparent);">'
+    return '<div class="safe-bottom" style="position:relative;z-index:5;display:flex;align-items:center;justify-content:space-around;padding:10px 8px 22px;background:var(--tabbar);backdrop-filter:blur(16px);border-top:1px solid color-mix(in oklch, var(--border) 50%, transparent);">'
       + '<div data-act="setTab" data-arg="home" class="dc-btn" style="display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;"><div style="width:5px;height:5px;border-radius:50%;background:' + dot('home') + ';"></div><div style="font-size:10.5px;font-weight:600;color:' + label('home') + ';">首页</div></div>'
       + '<div data-act="setTab" data-arg="report" class="dc-btn" style="display:flex;flex-direction:column;align-items:center;gap:4px;width:52px;"><div style="width:5px;height:5px;border-radius:50%;background:' + dot('report') + ';"></div><div style="font-size:10.5px;font-weight:600;color:' + label('report') + ';">报表</div></div>'
       + '<div data-act="openOverlay" data-arg="add" class="dc-btn" style="width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-top:-30px;box-shadow:0 8px 20px rgba(0,0,0,.4);background:' + fabBg + ';">'
@@ -1027,7 +1060,7 @@
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
       + '<div data-act="closeOverlay" class="dc-btn" style="font-size:20px;color:var(--text-mute);width:24px;">✕</div>'
       + '<div style="font-size:15px;font-weight:700;">主题皮肤商店</div><div style="width:24px;"></div></div>'
-      + '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">背景皮肤 · 应用于首页与我的</div>'
+      + '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">背景皮肤 · 应用于整个 App</div>'
       + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + skinsHtml
       + '<div data-act="setSkin" data-arg="customGradient" class="dc-btn" style="border-radius:16px;padding:3px;border:' + customGradRing + ';">'
       + '<div style="border-radius:14px;height:74px;background:' + d.customGradientCss + ';"></div>'
@@ -1048,17 +1081,18 @@
   function renderOverlayEditBudget(d) {
     var rows = d.periodBudgetsList.map(function (b) {
       return '<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surface2);border-radius:14px;padding:12px 14px;">'
-        + '<div style="display:flex;align-items:center;gap:8px;"><div style="width:9px;height:9px;border-radius:2px;background:' + b.color + ';"></div><div style="font-size:13.5px;font-weight:600;">' + esc(b.catName) + '</div></div>'
-        + '<div style="display:flex;align-items:center;gap:10px;">'
-        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|-100" class="dc-btn" style="width:26px;height:26px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:16px;">−</div>'
-        + '<div style="font-family:var(--font-mono);font-size:13px;font-weight:700;min-width:64px;text-align:center;">' + b.limitFmt + '</div>'
-        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|100" class="dc-btn" style="width:26px;height:26px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:16px;">+</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;min-width:0;"><div style="width:9px;height:9px;border-radius:2px;flex-shrink:0;background:' + b.color + ';"></div><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(b.catName) + '</div></div>'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">'
+        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|-100" class="dc-btn" style="width:24px;height:24px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">−</div>'
+        + '<input type="number" inputmode="numeric" data-budget-cat="' + b.cat + '" value="' + b.limit + '" style="width:76px;background:var(--surface);border:none;border-radius:8px;padding:6px 4px;font-family:var(--font-mono);font-size:13px;font-weight:700;text-align:center;color:var(--text);outline:none;">'
+        + '<div data-act="adjustBudgetLimit" data-arg="' + b.cat + '|100" class="dc-btn" style="width:24px;height:24px;border-radius:50%;background:var(--track);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">+</div>'
         + '</div></div>';
     }).join('');
     return '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div style="width:36px;height:4px;border-radius:3px;background:var(--track);"></div></div>'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
       + '<div data-act="closeOverlay" class="dc-btn" style="font-size:20px;color:var(--text-mute);width:24px;">✕</div>'
       + '<div style="font-size:15px;font-weight:700;">编辑预算</div><div style="width:24px;"></div></div>'
+      + '<div style="font-size:11px;color:var(--text-mute);margin-bottom:12px;">点击数字可以直接输入金额，也可以用 +/− 微调</div>'
       + '<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--surface2);border-radius:14px;margin-bottom:14px;">'
       + '<div style="font-size:12.5px;color:var(--text-mute);">' + d.periodLabel + ' 总预算</div>'
       + '<div style="font-family:var(--font-mono);font-size:15px;font-weight:700;">' + d.periodLimitFmt + '</div></div>'
@@ -1083,16 +1117,26 @@
 
   function renderOverlayAddAsset(d) {
     var na = state.newAsset;
+    var selectedCat = assetCatById(na.category);
+    var catChips = ASSET_CATEGORIES.map(function (c) {
+      var on = na.category === c.id;
+      return '<div data-act="setNewAssetCategory" data-arg="' + c.id + '" class="dc-btn" style="padding:8px 12px;border-radius:100px;font-size:12.5px;font-weight:600;background:' + (on ? d.accent : 'var(--surface2)') + ';color:' + (on ? '#0b1220' : 'var(--text-soft)') + ';white-space:nowrap;">' + c.icon + ' ' + c.name + '</div>';
+    }).join('');
+    var valueLabel = selectedCat.tracksDep ? '购入价（¥）' : '金额（¥）';
+    var depFields = selectedCat.tracksDep
+      ? (fieldRow('当前估值（¥，可留空）', 'newAsset.current', na.current, 'number', '默认等于购入价')
+        + fieldRow('购入日期', 'newAsset.dateStr', na.dateStr, 'date', '')
+        + fieldRow('预计已使用次数（可选）', 'newAsset.uses', na.uses, 'number', '用于按次折旧'))
+      : '';
     return '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div style="width:36px;height:4px;border-radius:3px;background:var(--track);"></div></div>'
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
       + '<div data-act="closeOverlay" class="dc-btn" style="font-size:20px;color:var(--text-mute);width:24px;">✕</div>'
       + '<div style="font-size:15px;font-weight:700;">添加资产</div><div style="width:24px;"></div></div>'
-      + fieldRow('资产名称', 'newAsset.name', na.name, 'text', '如：MacBook Pro')
-      + fieldRow('分类', 'newAsset.category', na.category, 'text', '如：电子设备 / 家居')
-      + fieldRow('购入价（¥）', 'newAsset.buy', na.buy, 'number', '0')
-      + fieldRow('当前估值（¥，可留空）', 'newAsset.current', na.current, 'number', '默认等于购入价')
-      + fieldRow('购入日期', 'newAsset.dateStr', na.dateStr, 'date', '')
-      + fieldRow('预计已使用次数（可选）', 'newAsset.uses', na.uses, 'number', '用于按次折旧')
+      + '<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">分类</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">' + catChips + '</div>'
+      + fieldRow('名称', 'newAsset.name', na.name, 'text', selectedCat.tracksDep ? '如：MacBook Pro' : '如：招商银行储蓄卡')
+      + fieldRow(valueLabel, 'newAsset.buy', na.buy, 'number', '0')
+      + depFields
       + '<div data-act="saveNewAsset" class="dc-btn" style="margin-top:16px;border-radius:16px;padding:15px;text-align:center;font-size:15px;font-weight:700;background:' + d.accent + ';color:#0b1220;">保存资产</div>';
   }
 
@@ -1200,9 +1244,12 @@
     else if (state.tab === 'billReview') body = renderBillReview(d);
     else body = renderHome(d);
 
-    var html = '<div style="height:100dvh;height:100vh;display:flex;flex-direction:column;position:relative;overflow:hidden;font-family:var(--font-display);' + themeVars + 'background:var(--bg);color:var(--text);">'
+    var html = '<div style="height:100dvh;height:100vh;position:relative;overflow:hidden;font-family:var(--font-display);' + themeVars + 'background:var(--bg);color:var(--text);">'
+      + fullPageBackgroundLayer(d)
+      + '<div style="position:relative;z-index:1;height:100%;display:flex;flex-direction:column;">'
       + body
       + renderTabBar()
+      + '</div>'
       + renderOverlay(d)
       + renderToast()
       + '<input type="file" id="avatarFileInput" accept="image/*" style="display:none;">'
@@ -1442,19 +1489,30 @@
       update(function (s) { return { budgetPeriodIdx: Math.max(0, Math.min(5, s.budgetPeriodIdx + parseInt(d, 10))) }; });
     },
     toastGeneric: function () { showToast('功能开发中'); },
-    openAddAsset: function () { update({ overlay: 'addAsset', newAsset: { name: '', category: '电子设备', buy: '', current: '', dateStr: todayISO(), uses: '' } }); },
+    openAddAsset: function () { update({ overlay: 'addAsset', newAsset: { name: '', category: 'electronics', buy: '', current: '', dateStr: todayISO(), uses: '' } }); },
+    setNewAssetCategory: function (id) {
+      update(function (s) { return { newAsset: Object.assign({}, s.newAsset, { category: id }) }; });
+    },
     saveNewAsset: function () {
       var na = state.newAsset;
-      var buy = parseFloat(na.buy), cur = parseFloat(na.current);
-      if (!na.name || !buy || buy <= 0) { showToast('请填写名称和购入价'); return; }
-      if (!cur || cur <= 0) cur = buy;
-      var years = 0.05;
-      if (na.dateStr) {
-        var days = Math.max(1, Math.round((Date.parse(todayISO()) - Date.parse(na.dateStr)) / 86400000));
-        years = Math.max(0.02, +(days / 365).toFixed(2));
+      var catInfo = assetCatById(na.category);
+      var buy = parseFloat(na.buy);
+      if (!na.name || !buy || buy <= 0) { showToast('请填写名称和金额'); return; }
+      var asset;
+      if (!catInfo.tracksDep) {
+        // cash / bank deposits: no depreciation tracking needed
+        asset = { id: uid(), name: na.name, category: na.category, buy: buy, current: buy, years: 0, uses: 0 };
+      } else {
+        var cur = parseFloat(na.current);
+        if (!cur || cur <= 0) cur = buy;
+        var years = 0.05;
+        if (na.dateStr) {
+          var days = Math.max(1, Math.round((Date.parse(todayISO()) - Date.parse(na.dateStr)) / 86400000));
+          years = Math.max(0.02, +(days / 365).toFixed(2));
+        }
+        var uses = parseInt(na.uses, 10) || 1;
+        asset = { id: uid(), name: na.name, category: na.category, buy: buy, current: cur, years: years, uses: uses };
       }
-      var uses = parseInt(na.uses, 10) || 1;
-      var asset = { id: uid(), name: na.name, category: na.category || '其他', buy: buy, current: cur, years: years, uses: uses };
       update(function (s) { return { assets: [asset].concat(s.assets), overlay: null }; });
       showToast('资产已添加');
     },
@@ -1679,6 +1737,16 @@
         }
       };
       reader.readAsText(el.files[0]);
+      return;
+    }
+    var budgetCat = el.getAttribute && el.getAttribute('data-budget-cat');
+    if (budgetCat != null) {
+      var newLimit = Math.max(0, parseFloat(el.value) || 0);
+      update(function (s) {
+        var bl = Object.assign({}, s.budgetLimits);
+        bl[budgetCat] = newLimit;
+        return { budgetLimits: bl };
+      });
       return;
     }
     var billIdx = el.getAttribute && el.getAttribute('data-bill-idx');
