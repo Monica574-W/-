@@ -196,51 +196,19 @@
     return parts[1] + '-' + parts[2];
   }
 
-  /* ---------- 种子数据（首次启动时写入） ---------- */
-  function seedTransactions() {
-    var now = new Date();
-    function d(monthsAgo, day) {
-      var dt = new Date(now.getFullYear(), now.getMonth() - monthsAgo, Math.min(day, 27));
-      return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
-    }
-    return [
-      { id: uid() + 1, type: 'income', cat: 'salary', note: '7月工资', amount: 12800, date: d(0, 5), channel: 'bank' },
-      { id: uid() + 2, type: 'expense', cat: 'housing', note: '房租', amount: 3200, date: d(0, 6), channel: 'bank' },
-      { id: uid() + 3, type: 'expense', cat: 'food', note: '超市采购', amount: 342, date: d(0, 9), channel: 'alipay' },
-      { id: uid() + 4, type: 'expense', cat: 'shopping', note: '蓝牙耳机', amount: 399, date: d(0, 12), channel: 'wechat' },
-      { id: uid() + 5, type: 'expense', cat: 'transport', note: '打车', amount: 28, date: d(0, 14), channel: 'alipay' },
-      { id: uid() + 6, type: 'expense', cat: 'entertainment', note: '电影票', amount: 70, date: d(0, 16), channel: 'wechat' },
-      { id: uid() + 7, type: 'income', cat: 'salary', note: '工资', amount: 12800, date: d(1, 5), channel: 'bank' },
-      { id: uid() + 8, type: 'expense', cat: 'housing', note: '房租', amount: 3200, date: d(1, 6), channel: 'bank' },
-      { id: uid() + 9, type: 'expense', cat: 'food', note: '外卖', amount: 210, date: d(1, 15), channel: 'wechat' },
-      { id: uid() + 10, type: 'expense', cat: 'entertainment', note: '演唱会', amount: 680, date: d(1, 20), channel: 'alipay' },
-      { id: uid() + 11, type: 'income', cat: 'salary', note: '工资', amount: 12500, date: d(2, 5), channel: 'bank' },
-      { id: uid() + 12, type: 'expense', cat: 'housing', note: '房租', amount: 3200, date: d(2, 6), channel: 'bank' },
-      { id: uid() + 13, type: 'expense', cat: 'shopping', note: '换季衣物', amount: 560, date: d(2, 18) }
-    ];
-  }
-  function seedAssets() {
-    return [
-      { id: 1, name: 'MacBook Pro 14"', category: '电子设备', buy: 16999, current: 11500, years: 1.3, uses: 410 },
-      { id: 2, name: 'iPhone 15 Pro', category: '电子设备', buy: 8999, current: 5200, years: 1.8, uses: 620 },
-      { id: 3, name: '索尼 A7C 相机', category: '电子设备', buy: 12800, current: 9000, years: 0.7, uses: 85 },
-      { id: 4, name: '人体工学椅', category: '家居', buy: 3200, current: 2400, years: 1.5, uses: 300 },
-      { id: 5, name: 'iPad Air', category: '电子设备', buy: 4799, current: 3300, years: 2.1, uses: 260 }
-    ];
-  }
-
   function defaultState() {
     return {
+      userName: '',
       tab: 'home', overlay: null, accentHue: 195, skinId: 'aurora',
       txType: 'expense', txCategory: null, txAmount: '', txNote: '', txChannel: 'wechat', toast: null,
       reportMonthIdx: 5, budgetPeriodIdx: 5,
       depMethods: {}, mode: 'dark', budgetLimits: Object.assign({}, DEFAULT_BUDGET_LIMITS),
-      piggyBalance: 1130, piggyGoal: 10000, piggyHistory: [],
+      piggyBalance: 0, piggyGoal: 10000, piggyHistory: [],
       piggyDepositAmount: '',
       remindOnOpen: true, reminderDismissedDate: null,
       customColors: ['#2dd4bf', '#38bdf8', '#818cf8', '#f472b6', '#fbbf24'],
-      transactions: seedTransactions(),
-      assets: seedAssets(),
+      transactions: [],
+      assets: [],
       nextAssetId: 6,
       avatarImg: null, wallpaperImg: null,
       newAsset: { name: '', category: '电子设备', buy: '', current: '', dateStr: '', uses: '' },
@@ -256,9 +224,24 @@
     };
   }
 
-  function loadState() {
+  var PROFILES_KEY = 'cefang_ledger_profiles_v1';
+  var ACTIVE_KEY = 'cefang_ledger_active_v1';
+  function profileDataKey(id) { return 'cefang_ledger_data_v1__' + id; }
+
+  function loadProfiles() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
+      var raw = localStorage.getItem(PROFILES_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+  function saveProfiles() {
+    try { localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles)); } catch (e) { console.error('保存账号列表失败', e); }
+  }
+
+  function loadProfileState(id) {
+    try {
+      var raw = localStorage.getItem(profileDataKey(id));
       if (!raw) return defaultState();
       var saved = JSON.parse(raw);
       return Object.assign(defaultState(), saved, {
@@ -273,24 +256,29 @@
         editingTxId: null, pinSetupStage: 'enter', pinSetupFirst: '', pinInput: '', pinError: ''
       });
     } catch (e) {
-      console.error('加载本地数据失败，使用初始数据', e);
+      console.error('加载账号数据失败，使用初始数据', e);
       return defaultState();
     }
   }
   function persist() {
+    if (!activeProfileId) return;
     try {
       var toSave = Object.assign({}, state);
       delete toSave.toast; // never persist transient toast
       delete toSave.billRows; // transient bill-import review data
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+      localStorage.setItem(profileDataKey(activeProfileId), JSON.stringify(toSave));
     } catch (e) {
       console.error('保存本地数据失败', e);
     }
   }
 
-  var state = loadState();
-  var locked = !!(state.security && state.security.pinEnabled && state.security.pinCode);
+  var profiles = loadProfiles();
+  var activeProfileId = localStorage.getItem(ACTIVE_KEY) || null;
+  if (activeProfileId && !profiles.some(function (p) { return p.id === activeProfileId; })) activeProfileId = null;
+  var state = activeProfileId ? loadProfileState(activeProfileId) : null;
+  var locked = !!(state && state.security && state.security.pinEnabled && state.security.pinCode);
   var toastTimer = null;
+  var newProfileNameDraft = '';
 
   function update(patch) {
     if (typeof patch === 'function') {
@@ -302,10 +290,11 @@
     render();
   }
   function showToast(msg) {
+    if (!state) return;
     state.toast = msg;
     render();
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { state.toast = null; render(); }, 2000);
+    toastTimer = setTimeout(function () { if (state) { state.toast = null; render(); } }, 2000);
   }
 
   /* ---------- 派生数据计算 ---------- */
@@ -754,7 +743,7 @@
     return '<div style="flex:1;overflow-y:auto;padding-top:calc(env(safe-area-inset-top,0px) + 20px);">'
       + '<div style="padding:0 20px;display:flex;align-items:center;gap:14px;">'
       + '<div data-act="pickAvatar" class="dc-btn">' + avatarBlock(d, 56) + '</div>'
-      + '<div><div style="font-size:17px;font-weight:800;">我的账本</div><div style="font-size:12px;color:var(--text-mute);margin-top:3px;">已连续记账 ' + d.streakDays + ' 天</div></div></div>'
+      + '<div><div style="font-size:17px;font-weight:800;">' + (state.userName ? esc(state.userName) + '的账本' : '我的账本') + '</div><div style="font-size:12px;color:var(--text-mute);margin-top:3px;">已连续记账 ' + d.streakDays + ' 天</div></div></div>'
 
       + '<div data-act="openOverlay" data-arg="themes" class="dc-btn" style="margin:20px 20px 0;border-radius:18px;position:relative;overflow:hidden;">'
       + wallpaperLayer
@@ -807,6 +796,7 @@
 
       + '<div style="margin:14px 20px 0;background:var(--surface);border-radius:16px;overflow:hidden;">'
       + '<div data-act="openOverlay" data-arg="reminders" class="dc-btn" style="padding:14px 16px;font-size:13.5px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);display:flex;justify-content:space-between;">记账提醒<span style="color:var(--text-mute);">›</span></div>'
+      + '<div data-act="switchAccount" class="dc-btn" style="padding:14px 16px;font-size:13.5px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);display:flex;justify-content:space-between;">切换 / 新建账号<span style="color:var(--text-mute);">›</span></div>'
       + '<div data-act="toastGeneric" class="dc-btn" style="padding:14px 16px;font-size:13.5px;display:flex;justify-content:space-between;">关于策方<span style="color:var(--text-mute);">›</span></div>'
       + '</div>'
       + '<div style="height:110px;"></div></div>';
@@ -1195,6 +1185,7 @@
   }
 
   function render() {
+    if (!activeProfileId || !state) { renderProfilePicker(); return; }
     if (locked) { renderLockScreen(); return; }
     var d = computeDerived();
     var theme = THEME[state.mode] || THEME.dark;
@@ -1245,6 +1236,34 @@
       if (k === '') return '<div></div>';
       return '<div data-act="' + actionName + '" data-arg="' + k + '" class="dc-btn" style="height:56px;border-radius:16px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600;">' + (k === 'del' ? '⌫' : k) + '</div>';
     }).join('') + '</div>';
+  }
+
+  function renderProfilePicker() {
+    var accent = hue(195, 72, 0.14);
+    var theme = THEME.dark;
+    var themeVars = '--bg:' + theme.bg + ';--surface:' + theme.surface + ';--surface2:' + theme.surface2 + ';--track:' + theme.track + ';--border:' + theme.border + ';--sheet:' + theme.sheet + ';--tabbar:' + theme.tabbar + ';--text:' + theme.text + ';--text-soft:' + theme.textSoft + ';--text-mute:' + theme.textMute + ';--text-faint:' + theme.textFaint + ';';
+
+    var listHtml = profiles.length ? profiles.map(function (p) {
+      return '<div style="display:flex;align-items:center;gap:10px;background:var(--surface2);border-radius:14px;padding:4px;margin-bottom:10px;">'
+        + '<div data-act="selectProfile" data-arg="' + p.id + '" class="dc-btn" style="flex:1;display:flex;align-items:center;gap:12px;padding:10px 12px;">'
+        + '<div style="width:38px;height:38px;border-radius:50%;background:' + accent + ';display:flex;align-items:center;justify-content:center;font-weight:700;color:#0b1220;flex-shrink:0;">' + esc((p.name || '？').charAt(0)) + '</div>'
+        + '<div style="flex:1;min-width:0;"><div style="font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(p.name || '未命名账号') + '</div></div>'
+        + '<div style="font-size:14px;color:var(--text-mute);">›</div></div>'
+        + '<div data-act="deleteProfile" data-arg="' + p.id + '" class="dc-btn" style="font-size:14px;color:var(--text-faint);padding:0 12px;">×</div>'
+        + '</div>';
+    }).join('') : '<div style="font-size:12px;color:var(--text-faint);text-align:center;padding:12px 0 20px;">这台设备上还没有账号</div>';
+
+    return document.getElementById('app').innerHTML =
+      '<div style="height:100dvh;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:32px;overflow-y:auto;' + themeVars + 'background:var(--bg);color:var(--text);">'
+      + '<div style="font-size:36px;margin-bottom:10px;">📒</div>'
+      + '<div style="font-size:20px;font-weight:800;margin-bottom:6px;">策方 Ledger</div>'
+      + '<div style="font-size:12.5px;color:var(--text-mute);line-height:1.6;margin-bottom:22px;">这台设备上每个账号的数据都是独立的，互不影响。选择你的账号，或者创建一个新的。</div>'
+      + listHtml
+      + '<div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.05em;margin:16px 0 10px;">新建账号</div>'
+      + '<input id="newProfileNameInput" value="' + esc(newProfileNameDraft) + '" placeholder="想怎么称呼这个账本，比如：小明" style="width:100%;background:var(--surface2);border:none;border-radius:12px;padding:13px 14px;font-size:15px;color:var(--text);outline:none;margin-bottom:14px;">'
+      + '<div data-act="createProfile" class="dc-btn" style="border-radius:16px;padding:15px;text-align:center;font-size:15px;font-weight:700;background:' + accent + ';color:#0b1220;">创建并进入</div>'
+      + '<div style="font-size:11px;color:var(--text-faint);margin-top:16px;line-height:1.6;">新账号从空白开始记账。所有账号的数据都只保存在这台设备的浏览器里，不会同步到其他设备，也不会和别人共享。</div>'
+      + '</div>';
   }
 
   function renderLockScreen() {
@@ -1300,6 +1319,51 @@
 
   /* ---------- 动作 ---------- */
   var Actions = {
+    selectProfile: function (id) {
+      var p = profiles.filter(function (pp) { return pp.id === id; })[0];
+      if (!p) return;
+      activeProfileId = id;
+      try { localStorage.setItem(ACTIVE_KEY, id); } catch (e) {}
+      state = loadProfileState(id);
+      locked = !!(state.security && state.security.pinEnabled && state.security.pinCode);
+      render();
+    },
+    createProfile: function () {
+      var name = (newProfileNameDraft || '').trim();
+      var id = uid() + '_' + Math.floor(Math.random() * 10000);
+      var p = { id: id, name: name || '未命名账号', createdAt: todayISO() };
+      profiles = profiles.concat([p]);
+      saveProfiles();
+      newProfileNameDraft = '';
+      activeProfileId = id;
+      try { localStorage.setItem(ACTIVE_KEY, id); } catch (e) {}
+      state = defaultState();
+      state.userName = name;
+      state.streakStart = todayISO();
+      locked = false;
+      persist();
+      render();
+    },
+    deleteProfile: function (id) {
+      var p = profiles.filter(function (pp) { return pp.id === id; })[0];
+      var ok = window.confirm ? window.confirm('删除账号"' + (p ? p.name : '') + '"会清除这个账号在本设备上的全部记账数据，且无法恢复，确定要删除吗？') : true;
+      if (!ok) return;
+      profiles = profiles.filter(function (pp) { return pp.id !== id; });
+      saveProfiles();
+      try { localStorage.removeItem(profileDataKey(id)); } catch (e) {}
+      if (activeProfileId === id) {
+        activeProfileId = null;
+        state = null;
+        try { localStorage.removeItem(ACTIVE_KEY); } catch (e) {}
+      }
+      render();
+    },
+    switchAccount: function () {
+      activeProfileId = null;
+      state = null;
+      try { localStorage.removeItem(ACTIVE_KEY); } catch (e) {}
+      render();
+    },
     setTab: function (tab) { update({ tab: tab, overlay: null }); },
     openOverlay: function (name) {
       if (name === 'add') update({ overlay: 'add', editingTxId: null, txType: 'expense', txCategory: null, txAmount: '', txNote: '', txDateStr: todayISO(), txChannel: 'wechat' });
@@ -1547,13 +1611,15 @@
   }
   function handleInput(e) {
     var el = e.target;
+    if (el.id === 'newProfileNameInput') { newProfileNameDraft = el.value; return; }
     var bind = el.getAttribute && el.getAttribute('data-bind');
-    if (!bind) return;
+    if (!bind || !state) return;
     setPath(state, bind, el.value);
     persist();
     if (el.getAttribute('data-live') === '1') render();
   }
   function handleChange(e) {
+    if (!state) return;
     var el = e.target;
     if (el.id === 'avatarFileInput' && el.files && el.files[0]) {
       compressImageFile(el.files[0], 480, function (dataUrl) { update({ avatarImg: dataUrl }); });
