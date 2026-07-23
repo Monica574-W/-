@@ -26,126 +26,16 @@
   function channelName(id) { var c = CHANNELS.filter(function (c) { return c.id === id; })[0]; return c ? c.name : ''; }
 
   var ASSET_CATEGORIES = [
-    { id: 'cash', name: '现金', icon: '💵', tracksDep: false },
-    { id: 'bank', name: '银行存款', icon: '🏦', tracksDep: false },
-    { id: 'electronics', name: '电子设备', icon: '💻', tracksDep: true },
-    { id: 'furniture', name: '家居物品', icon: '🛋️', tracksDep: true },
-    { id: 'vehicle', name: '车辆', icon: '🚗', tracksDep: true },
-    { id: 'valuables', name: '收藏/贵重物品', icon: '💎', tracksDep: true },
-    { id: 'other', name: '其他物品', icon: '📦', tracksDep: true }
+    { id: 'cash', name: '现金', icon: '💵', tracksDep: false, depYears: null },
+    { id: 'bank', name: '银行存款', icon: '🏦', tracksDep: false, depYears: null },
+    { id: 'electronics', name: '电子设备', icon: '💻', tracksDep: true, depYears: 3 },
+    { id: 'furniture', name: '家居物品', icon: '🛋️', tracksDep: true, depYears: 5 },
+    { id: 'vehicle', name: '车辆', icon: '🚗', tracksDep: true, depYears: 4 },
+    { id: 'valuables', name: '收藏/贵重物品', icon: '💎', tracksDep: true, depYears: null },
+    { id: 'other', name: '其他物品', icon: '📦', tracksDep: true, depYears: 5 }
   ];
   function assetCatById(id) { return ASSET_CATEGORIES.filter(function (c) { return c.id === id; })[0] || ASSET_CATEGORIES[ASSET_CATEGORIES.length - 1]; }
 
-  /* ---------- 账单导入：分类关键词猜测 ---------- */
-  var CATEGORY_KEYWORDS = {
-    food: ['餐', '美团', '饿了么', '肯德基', '麦当劳', '星巴克', '咖啡', '奶茶', '外卖', '食', '菜市场', '生鲜'],
-    transport: ['滴滴', '打车', '地铁', '公交', '高铁', '机票', '出行', '停车', '加油', '火车', '航空'],
-    housing: ['房租', '物业', '水费', '电费', '燃气', '宽带', '房贷', '房屋'],
-    entertainment: ['电影', '票务', '游戏', 'KTV', '演唱会', '视频', '音乐', '票'],
-    shopping: ['淘宝', '天猫', '京东', '拼多多', '超市', '商场', '购物']
-  };
-  function guessCategoryId(text) {
-    var t = text || '';
-    var ids = Object.keys(CATEGORY_KEYWORDS);
-    for (var i = 0; i < ids.length; i++) {
-      var kws = CATEGORY_KEYWORDS[ids[i]];
-      for (var j = 0; j < kws.length; j++) {
-        if (t.indexOf(kws[j]) >= 0) {
-          var found = catById(ids[i]);
-          if (found) return found.id;
-        }
-      }
-    }
-    return null;
-  }
-  function normHeader(h) { return String(h || '').replace(/[（）()\s]/g, ''); }
-  function findCol(headers, keyword) {
-    for (var i = 0; i < headers.length; i++) {
-      if (normHeader(headers[i]).indexOf(keyword) >= 0) return i;
-    }
-    return -1;
-  }
-  function parseBillAmount(raw) {
-    var n = parseFloat(String(raw || '').replace(/[¥￥,\s]/g, ''));
-    return isNaN(n) ? 0 : Math.abs(n);
-  }
-  function parseBillDate(raw) {
-    var s = String(raw || '').trim();
-    var m = s.match(/(\d{4})-(\d{2})-(\d{2})/) || s.match(/(\d{4})\/(\d{2})\/(\d{2})/);
-    if (m) return m[1] + '-' + m[2] + '-' + m[3];
-    return todayISO();
-  }
-
-  /* 极简 CSV 解析器（不依赖任何外部库），支持带引号字段、字段内逗号/换行、双引号转义 */
-  function parseCSV(text) {
-    var rows = [];
-    var row = [];
-    var field = '';
-    var inQuotes = false;
-    var s = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    for (var i = 0; i < s.length; i++) {
-      var c = s[i];
-      if (inQuotes) {
-        if (c === '"') {
-          if (s[i + 1] === '"') { field += '"'; i++; }
-          else { inQuotes = false; }
-        } else {
-          field += c;
-        }
-      } else {
-        if (c === '"') { inQuotes = true; }
-        else if (c === ',') { row.push(field); field = ''; }
-        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
-        else { field += c; }
-      }
-    }
-    row.push(field);
-    rows.push(row);
-    // drop fully-empty trailing rows
-    while (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
-    return rows;
-  }
-
-  /* Parses raw CSV text (already decoded) from an Alipay or WeChat Pay bill export
-     into an array of candidate transaction rows: {type, cat, channel, note, amount, date, include} */
-  function parseBillCsv(text, channel) {
-    var rows = parseCSV(text);
-    var headerIdx = -1;
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i].indexOf('收/支') >= 0) { headerIdx = i; break; }
-    }
-    if (headerIdx < 0) return [];
-    var headers = rows[headerIdx];
-    var colDir = findCol(headers, '收/支');
-    var colAmount = findCol(headers, '金额');
-    var colCounterparty = findCol(headers, '交易对方');
-    var colGoods = findCol(headers, '商品');
-    var colStatus = channel === 'alipay' ? findCol(headers, '交易状态') : findCol(headers, '当前状态');
-    var colDate = channel === 'alipay' ? findCol(headers, '付款时间') : findCol(headers, '交易时间');
-    if (colDate < 0) colDate = channel === 'alipay' ? findCol(headers, '交易创建时间') : findCol(headers, '交易时间');
-
-    var out = [];
-    for (var r = headerIdx + 1; r < rows.length; r++) {
-      var row = rows[r];
-      if (!row || row.length < 2) continue;
-      var dir = (row[colDir] || '').trim();
-      if (dir !== '收入' && dir !== '支出') continue; // 跳过"不计收支"等
-      var status = colStatus >= 0 ? (row[colStatus] || '') : '';
-      if (status.indexOf('失败') >= 0 || status.indexOf('关闭') >= 0) continue;
-      var amount = parseBillAmount(row[colAmount]);
-      if (amount <= 0) continue;
-      var counterparty = colCounterparty >= 0 ? (row[colCounterparty] || '').trim() : '';
-      var goods = colGoods >= 0 ? (row[colGoods] || '').trim() : '';
-      var note = (goods && goods !== counterparty) ? (counterparty + (goods ? ' ' + goods : '')) : (counterparty || goods);
-      var type = dir === '收入' ? 'income' : 'expense';
-      var cat = type === 'expense' ? (guessCategoryId(note) || cats()[0].id) : 'salary';
-      out.push({
-        type: type, cat: cat, channel: channel, note: note.slice(0, 40),
-        amount: amount, date: parseBillDate(row[colDate]), include: true
-      });
-    }
-    return out;
-  }
 
   var INCOME_CATS = [
     { id: 'salary', name: '工资' },
@@ -211,6 +101,7 @@
     return {
       userName: '',
       tab: 'home', overlay: null, accentHue: 195, skinId: 'aurora',
+      pageSkinId: 'aurora', pageWallpaperImg: null,
       txType: 'expense', txCategory: null, txAmount: '', txNote: '', txChannel: 'wechat', toast: null,
       reportMonthIdx: 5, budgetPeriodIdx: 5,
       depMethods: {}, mode: 'dark', budgetLimits: Object.assign({}, DEFAULT_BUDGET_LIMITS),
@@ -230,8 +121,7 @@
       txDateStr: todayISO(),
       txList: { search: '', type: 'all', cat: 'all', monthKey: 'all' },
       security: { pinEnabled: false, pinCode: null },
-      pinSetupStage: 'enter', pinSetupFirst: '', pinInput: '', pinError: '',
-      billRows: [], pendingBillChannel: 'alipay'
+      pinSetupStage: 'enter', pinSetupFirst: '', pinInput: '', pinError: ''
     };
   }
 
@@ -276,7 +166,6 @@
     try {
       var toSave = Object.assign({}, state);
       delete toSave.toast; // never persist transient toast
-      delete toSave.billRows; // transient bill-import review data
       localStorage.setItem(profileDataKey(activeProfileId), JSON.stringify(toSave));
     } catch (e) {
       console.error('保存本地数据失败', e);
@@ -320,6 +209,20 @@
     return { income: income, expense: expense, byCat: byCat };
   }
 
+  /* 资产折旧：直线折旧法，现值随时间自动重新计算，不需要手动填写 */
+  function computeAssetCurrent(a, catInfo) {
+    if (!catInfo.tracksDep) return a.buy; // 现金/银行存款不折旧
+    if (catInfo.depYears == null) {
+      // 收藏/贵重物品等没有通用折旧标准的类别：保留旧数据里手填的现值（如果有），否则按购入价
+      return (typeof a.current === 'number' && a.current > 0) ? a.current : a.buy;
+    }
+    var purchaseDate = a.purchaseDate || (a.years ? todayISO(-Math.round(a.years * 365)) : todayISO());
+    var daysOwned = Math.max(0, Math.round((Date.parse(todayISO()) - Date.parse(purchaseDate)) / 86400000));
+    var yearsOwned = daysOwned / 365;
+    var pctLeft = Math.max(0, 1 - yearsOwned / catInfo.depYears);
+    return Math.round(a.buy * pctLeft);
+  }
+
   function computeDerived() {
     var s = state;
     var accent = hue(s.accentHue, 72, 0.14);
@@ -332,6 +235,12 @@
     else if (s.skinId === 'customGradient') { heroBg = customGradientCss; skinName = '自定义渐变'; }
     else { var sk = SKINS.filter(function (k) { return k.id === s.skinId; })[0] || SKINS[0]; heroBg = sk.css; skinName = sk.name; }
 
+    var pageSkinIsPhoto = s.pageSkinId === 'photo';
+    var pageBg, pageSkinName;
+    if (pageSkinIsPhoto) { pageBg = 'transparent'; pageSkinName = '自定义壁纸'; }
+    else if (s.pageSkinId === 'customGradient') { pageBg = customGradientCss; pageSkinName = '自定义渐变'; }
+    else { var psk = SKINS.filter(function (k) { return k.id === s.pageSkinId; })[0] || SKINS[0]; pageBg = psk.css; pageSkinName = psk.name; }
+
     var months = monthsWindow(6);
     var curKey = months[months.length - 1].key;
     var homeStats = monthStats(curKey);
@@ -343,7 +252,7 @@
     var net = homeStats.income - homeStats.expense;
 
     var assetsTotal = 0, assetsBuy = 0;
-    s.assets.forEach(function (a) { assetsTotal += a.current; assetsBuy += a.buy; });
+    s.assets.forEach(function (a) { assetsTotal += computeAssetCurrent(a, assetCatById(a.category)); assetsBuy += a.buy; });
     var assetsDiffPct = assetsBuy > 0 ? Math.round(((assetsTotal - assetsBuy) / assetsBuy) * 100) : 0;
 
     var compact = function (n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(n)); };
@@ -354,9 +263,10 @@
       cats().forEach(function (c) { if (mStats.byCat[c.id] > maxSpent) maxSpent = mStats.byCat[c.id]; });
       maxSpent = maxSpent || 1;
       return cats().map(function (cat) {
-        var limit = s.budgetLimits[cat.id] || 1;
+        var rawLimit = s.budgetLimits[cat.id];
+        var limit = (rawLimit === undefined || rawLimit === null) ? 300 : rawLimit;
         var spent = mStats.byCat[cat.id] || 0;
-        var pct = Math.min(100, Math.round((spent / limit) * 100));
+        var pct = limit > 0 ? Math.min(100, Math.round((spent / limit) * 100)) : (spent > 0 ? 100 : 0);
         var over = pct >= 90;
         var color = over ? negative : hue(cat.hue, 68, 0.14);
         var barHeightPct = Math.max(4, Math.round((spent / maxSpent) * 100));
@@ -466,21 +376,26 @@
 
     var assetsList = s.assets.map(function (a) {
       var catInfo = assetCatById(a.category);
-      var depTotal = a.buy - a.current;
-      var days = Math.round(a.years * 365) || 1;
+      var current = computeAssetCurrent(a, catInfo);
+      var purchaseDate = a.purchaseDate || (a.years ? todayISO(-Math.round(a.years * 365)) : todayISO());
+      var daysOwned = Math.max(1, Math.round((Date.parse(todayISO()) - Date.parse(purchaseDate)) / 86400000));
+      var yearsOwned = +(daysOwned / 365).toFixed(2);
+      var depTotal = Math.max(0, a.buy - current);
       var method = s.depMethods[a.id] || 'years';
       var rates = {
-        years: { label: '年', denom: a.years || 1, unit: '年' },
-        days: { label: '天', denom: days, unit: '天' },
+        years: { label: '年', denom: yearsOwned || 0.01, unit: '年' },
+        days: { label: '天', denom: daysOwned, unit: '天' },
         uses: { label: '次', denom: a.uses || 1, unit: '次' }
       };
       var r = rates[method];
       var rateVal = depTotal / r.denom;
       function pill(m) { return { bg: method === m ? accent : 'var(--surface2)', color: method === m ? '#0b1220' : 'var(--text-soft)' }; }
       var py = pill('years'), pd = pill('days'), pu = pill('uses');
+      var depStandardNote = catInfo.depYears ? ('按 ' + catInfo.depYears + ' 年直线折旧') : '不按固定比例折旧';
       return Object.assign({}, a, {
-        buyFmt: fmt(a.buy), currentFmt: fmt(a.current),
-        catName: catInfo.name, catIcon: catInfo.icon, tracksDep: catInfo.tracksDep,
+        current: current, years: yearsOwned,
+        buyFmt: fmt(a.buy), currentFmt: fmt(current),
+        catName: catInfo.name, catIcon: catInfo.icon, tracksDep: catInfo.tracksDep, depStandardNote: depStandardNote,
         iconBg: hue(230, 68, 0.13),
         depTotalFmt: fmt(depTotal), depRateFmt: r.label + '折旧 ' + fmt(rateVal) + '/' + r.unit,
         yearsBg: py.bg, yearsColor: py.color, daysBg: pd.bg, daysColor: pd.color, usesBg: pu.bg, usesColor: pu.color
@@ -489,7 +404,7 @@
 
     var assetCatBreakdown = ASSET_CATEGORIES.map(function (c) {
       var list = s.assets.filter(function (a) { return a.category === c.id; });
-      var total = list.reduce(function (sum, a) { return sum + a.current; }, 0);
+      var total = list.reduce(function (sum, a) { return sum + computeAssetCurrent(a, c); }, 0);
       return { id: c.id, name: c.name, icon: c.icon, count: list.length, total: total, totalFmt: fmt(total) };
     }).filter(function (c) { return c.count > 0; });
 
@@ -505,6 +420,7 @@
 
     return {
       accent: accent, negative: negative, positive: positive, heroBg: heroBg, skinName: skinName,
+      pageBg: pageBg, pageSkinName: pageSkinName, pageSkinIsPhoto: pageSkinIsPhoto,
       skinIsPhoto: skinIsPhoto, months: months, curKey: curKey,
       monthIncomeFmt: fmt(homeStats.income), monthExpenseFmt: fmt(homeStats.expense), netBalanceFmt: fmt(net),
       budgetPct: budgetPct, budgetPctFmt: budgetPct + '%', budgetBarWidth: Math.min(100, budgetPct) + '%',
@@ -712,7 +628,7 @@
     var rows = d.assetsList.length ? d.assetsList.map(function (a) {
       var depSection = a.tracksDep
         ? ('<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid color-mix(in oklch, var(--border) 50%, transparent);">'
-          + '<div style="font-size:11px;color:oklch(66% 0.19 25);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;margin-right:8px;">折旧' + a.depTotalFmt + ' · ' + a.depRateFmt + '</div>'
+          + '<div style="font-size:11px;color:oklch(66% 0.19 25);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1;margin-right:8px;" title="' + esc(a.depStandardNote) + '">折旧' + a.depTotalFmt + ' · ' + a.depRateFmt + '</div>'
           + '<div style="display:flex;gap:4px;background:var(--surface2);border-radius:100px;padding:3px;flex-shrink:0;">'
           + '<div data-act="setDepMethod" data-arg="' + a.id + '|years" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.yearsBg + ';color:' + a.yearsColor + ';">年</div>'
           + '<div data-act="setDepMethod" data-arg="' + a.id + '|days" class="dc-btn" style="padding:4px 9px;border-radius:100px;font-size:10.5px;font-weight:600;background:' + a.daysBg + ';color:' + a.daysColor + ';">天</div>'
@@ -759,9 +675,13 @@
       return '<div data-act="setAccent" data-arg="' + h + '" class="dc-btn" style="width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:' + ring + ';"><div style="width:24px;height:24px;border-radius:50%;background:' + c + ';"></div></div>';
     }).join('');
 
-    var wallpaperLayer = d.skinIsPhoto
-      ? (state.wallpaperImg ? '<div style="position:absolute;inset:0;background-image:url(' + state.wallpaperImg + ');background-size:cover;background-position:center;"></div><div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,.1), rgba(0,0,0,.55));"></div>' : '<div style="position:absolute;inset:0;background:var(--surface2);"></div>')
-      : '<div style="position:absolute;inset:0;background:' + d.heroBg + ';"></div>';
+    var wallpaperLayer = d.pageSkinIsPhoto
+      ? (state.pageWallpaperImg ? '<div style="position:absolute;inset:0;background-image:url(' + state.pageWallpaperImg + ');background-size:cover;background-position:center;"></div><div style="position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,.1), rgba(0,0,0,.55));"></div>' : '<div style="position:absolute;inset:0;background:var(--surface2);"></div>')
+      : '<div style="position:absolute;inset:0;background:' + d.pageBg + ';"></div>';
+
+    var heroPreviewBg = d.skinIsPhoto
+      ? (state.wallpaperImg ? ('url(' + state.wallpaperImg + ') center/cover') : 'var(--surface2)')
+      : d.heroBg;
 
     var modeLightBg = state.mode === 'light' ? d.accent : 'transparent', modeLightColor = state.mode === 'light' ? '#0b1220' : 'var(--text-mute)';
     var modeDarkBg = state.mode === 'dark' ? d.accent : 'transparent', modeDarkColor = state.mode === 'dark' ? '#0b1220' : 'var(--text-mute)';
@@ -774,8 +694,13 @@
       + '<div data-act="openOverlay" data-arg="themes" class="dc-btn" style="margin:20px 20px 0;border-radius:18px;position:relative;overflow:hidden;">'
       + wallpaperLayer
       + '<div style="position:relative;z-index:2;padding:16px;display:flex;align-items:center;justify-content:space-between;">'
-      + '<div><div style="font-size:11px;color:rgba(255,255,255,.7);">当前主题皮肤</div><div style="font-size:16px;font-weight:700;color:#fff;margin-top:3px;">' + esc(d.skinName) + '</div></div>'
+      + '<div><div style="font-size:11px;color:rgba(255,255,255,.7);">整体背景</div><div style="font-size:16px;font-weight:700;color:#fff;margin-top:3px;">' + esc(d.pageSkinName) + '</div></div>'
       + '<div style="font-size:12px;padding:6px 12px;border-radius:100px;background:rgba(0,0,0,.28);color:#fff;">更换 ›</div></div></div>'
+
+      + '<div data-act="openOverlay" data-arg="themes" class="dc-btn" style="margin:10px 20px 0;background:var(--surface);border-radius:16px;padding:12px 14px;display:flex;align-items:center;gap:12px;">'
+      + '<div style="width:44px;height:30px;border-radius:8px;flex-shrink:0;background:' + heroPreviewBg + ';"></div>'
+      + '<div style="flex:1;min-width:0;"><div style="font-size:11px;color:var(--text-mute);">记账本封面</div><div style="font-size:13.5px;font-weight:600;margin-top:2px;">' + esc(d.skinName) + '</div></div>'
+      + '<div style="font-size:12px;color:var(--text-mute);">更换 ›</div></div>'
 
       + '<div style="margin:14px 20px 0;"><div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.05em;padding:0 4px 8px;">强调色</div>'
       + '<div style="background:var(--surface);border-radius:16px;padding:14px;display:flex;gap:14px;">' + accentSwatches + '</div></div>'
@@ -802,14 +727,6 @@
       + '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px 0;">数据只保存在本机浏览器里，换设备前记得先导出备份</div></div>'
 
       + '<div style="margin:14px 20px 0;">'
-      + '<div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.05em;padding:0 4px 8px;">批量导入账单</div>'
-      + '<div style="background:var(--surface);border-radius:16px;overflow:hidden;">'
-      + '<div data-act="pickAlipayBill" class="dc-btn" style="padding:14px 16px;font-size:13.5px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);display:flex;justify-content:space-between;">导入支付宝账单 CSV<span style="color:var(--text-mute);">›</span></div>'
-      + '<div data-act="pickWechatBill" class="dc-btn" style="padding:14px 16px;font-size:13.5px;display:flex;justify-content:space-between;">导入微信支付账单 CSV<span style="color:var(--text-mute);">›</span></div>'
-      + '</div>'
-      + '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px 0;">在支付宝/微信 App 里导出账单明细（CSV 格式），导入后会先给你核对一遍再存进账本</div></div>'
-
-      + '<div style="margin:14px 20px 0;">'
       + '<div style="font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:.05em;padding:0 4px 8px;">安全锁</div>'
       + '<div style="background:var(--surface);border-radius:16px;overflow:hidden;">'
       + '<div style="padding:14px 16px;font-size:13.5px;display:flex;justify-content:space-between;align-items:center;' + (state.security.pinEnabled ? 'border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);' : '') + '">'
@@ -821,9 +738,7 @@
       + '<div style="font-size:11px;color:var(--text-faint);padding:8px 4px 0;">简单的 4 位数字锁，用于防止旁人随手打开查看，不是真正的加密</div></div>'
 
       + '<div style="margin:14px 20px 0;background:var(--surface);border-radius:16px;overflow:hidden;">'
-      + '<div data-act="openOverlay" data-arg="reminders" class="dc-btn" style="padding:14px 16px;font-size:13.5px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);display:flex;justify-content:space-between;">记账提醒<span style="color:var(--text-mute);">›</span></div>'
-      + '<div data-act="switchAccount" class="dc-btn" style="padding:14px 16px;font-size:13.5px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);display:flex;justify-content:space-between;">切换 / 新建账号<span style="color:var(--text-mute);">›</span></div>'
-      + '<div data-act="toastGeneric" class="dc-btn" style="padding:14px 16px;font-size:13.5px;display:flex;justify-content:space-between;">关于策方<span style="color:var(--text-mute);">›</span></div>'
+      + '<div data-act="openOverlay" data-arg="reminders" class="dc-btn" style="padding:14px 16px;font-size:13.5px;display:flex;justify-content:space-between;">记账提醒<span style="color:var(--text-mute);">›</span></div>'
       + '</div>'
       + '<div style="height:110px;"></div></div>';
   }
@@ -934,46 +849,13 @@
       + '<div style="height:110px;"></div></div>';
   }
 
-  function renderBillReview(d) {
-    var rows = state.billRows;
-    var includedCount = rows.filter(function (r) { return r.include; }).length;
-    var rowsHtml = rows.length ? rows.map(function (r, idx) {
-      var sign = r.type === 'income' ? '+' : '−';
-      var amountColor = r.type === 'income' ? d.positive : 'oklch(90% 0.01 250)';
-      var catOptions = (r.type === 'expense' ? cats() : INCOME_CATS).map(function (c) {
-        return '<option value="' + c.id + '"' + (r.cat === c.id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
-      }).join('');
-      return '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid color-mix(in oklch, var(--track) 60%, transparent);opacity:' + (r.include ? 1 : 0.4) + ';">'
-        + '<div data-act="toggleBillRow" data-arg="' + idx + '" class="dc-btn" style="width:20px;height:20px;border-radius:6px;flex-shrink:0;background:' + (r.include ? d.accent : 'var(--surface2)') + ';display:flex;align-items:center;justify-content:center;font-size:12px;color:#0b1220;">' + (r.include ? '✓' : '') + '</div>'
-        + '<div style="flex:1;min-width:0;">'
-        + '<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(r.note || '（无备注）') + '</div>'
-        + '<div style="font-size:10.5px;color:var(--text-mute);margin-top:2px;">' + r.date + ' · ' + esc(channelName(r.channel)) + '</div>'
-        + '<select data-bill-idx="' + idx + '" style="margin-top:6px;background:var(--surface2);border:none;border-radius:8px;padding:5px 8px;font-size:11.5px;color:var(--text);outline:none;">' + catOptions + '</select>'
-        + '</div>'
-        + '<div style="font-family:var(--font-mono);font-size:13.5px;font-weight:700;flex-shrink:0;color:' + amountColor + ';">' + sign + fmt(r.amount) + '</div>'
-        + '</div>';
-    }).join('') : '<div style="padding:24px;text-align:center;color:var(--text-mute);font-size:12.5px;">没有可导入的记录</div>';
-
-    return '<div style="flex:1;overflow-y:auto;padding-top:calc(env(safe-area-inset-top,0px) + 20px);">'
-      + '<div style="padding:0 20px;display:flex;align-items:center;gap:12px;">'
-      + '<div data-act="cancelBillImport" class="dc-btn" style="font-size:18px;color:var(--text-mute);">‹</div>'
-      + '<div style="font-size:20px;font-weight:800;">核对账单</div></div>'
-      + '<div style="margin:10px 20px 0;font-size:12px;color:var(--text-mute);">识别到 ' + rows.length + ' 笔，已选中 ' + includedCount + ' 笔。金额和方向来自账单文件，分类是猜的，点分类可以改，不需要的可以取消勾选。</div>'
-      + '<div style="margin:14px 20px 0;background:var(--surface);border-radius:16px;overflow:hidden;">' + rowsHtml + '</div>'
-      + '<div style="margin:16px 20px 0;display:flex;gap:10px;">'
-      + '<div data-act="cancelBillImport" class="dc-btn" style="flex:1;border-radius:16px;padding:14px;text-align:center;font-size:14px;font-weight:700;background:var(--surface2);color:var(--text-soft);">取消</div>'
-      + '<div data-act="confirmBillImport" class="dc-btn" style="flex:2;border-radius:16px;padding:14px;text-align:center;font-size:14px;font-weight:700;background:' + d.accent + ';color:#0b1220;">导入选中的 ' + includedCount + ' 笔</div>'
-      + '</div>'
-      + '<div style="height:110px;"></div></div>';
-  }
-
   function fullPageBackgroundLayer(d) {
     var inner = '';
-    if (d.skinIsPhoto) {
-      if (!state.wallpaperImg) return '';
-      inner = '<div style="position:absolute;inset:0;background-image:url(' + state.wallpaperImg + ');background-size:cover;background-position:center;"></div>';
+    if (d.pageSkinIsPhoto) {
+      if (!state.pageWallpaperImg) return '';
+      inner = '<div style="position:absolute;inset:0;background-image:url(' + state.pageWallpaperImg + ');background-size:cover;background-position:center;"></div>';
     } else {
-      inner = '<div style="position:absolute;inset:0;background:' + d.heroBg + ';"></div>';
+      inner = '<div style="position:absolute;inset:0;background:' + d.pageBg + ';"></div>';
     }
     var dimOpacity = state.mode === 'light' ? 0.78 : 0.68;
     return '<div style="position:absolute;inset:0;z-index:0;overflow:hidden;">'
@@ -1025,6 +907,9 @@
       + '<div data-act="setTxType" data-arg="expense" class="dc-btn" style="flex:1;text-align:center;padding:9px 0;font-size:13.5px;font-weight:700;position:relative;z-index:1;">支出</div>'
       + '<div data-act="setTxType" data-arg="income" class="dc-btn" style="flex:1;text-align:center;padding:9px 0;font-size:13.5px;font-weight:700;position:relative;z-index:1;">收入</div></div>'
       + '<div style="text-align:center;margin:20px 0 6px;font-family:var(--font-mono);font-size:38px;font-weight:700;color:' + amountColor + ';">¥' + (state.txAmount || '0') + '</div>'
+      + '<div style="display:flex;justify-content:center;gap:8px;margin-bottom:14px;">' + ['2', '3', '4', '5', '6', '7'].map(function (n) {
+        return '<div data-act="multiplyAmount" data-arg="' + n + '" class="dc-btn" style="padding:6px 10px;border-radius:100px;font-size:11.5px;font-weight:700;background:var(--surface2);color:var(--text-soft);">× ' + n + '</div>';
+      }).join('') + '</div>'
       + '<input data-bind="txNote" value="' + esc(state.txNote) + '" placeholder="添加备注（可选）" style="width:100%;background:var(--surface2);border:none;border-radius:12px;padding:10px 12px;font-size:13px;color:var(--text);margin-bottom:10px;outline:none;">'
       + '<input data-bind="txDateStr" type="date" value="' + esc(state.txDateStr) + '" style="width:100%;background:var(--surface2);border:none;border-radius:12px;padding:10px 12px;font-size:13px;color:var(--text);margin-bottom:10px;outline:none;">'
       + '<div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">支付渠道</div>'
@@ -1034,19 +919,31 @@
       + '<div data-act="saveTx" class="dc-btn" style="margin-top:16px;border-radius:16px;padding:15px;text-align:center;font-size:15px;font-weight:700;background:' + d.accent + ';color:#0b1220;opacity:' + (canSave ? 1 : 0.55) + ';">' + (isEdit ? '保存修改' : '保存记录') + '</div>';
   }
 
-  function renderOverlayThemes(d) {
+  function renderSkinGallery(currentId, currentWallpaperImg, setAction, pickAction, d) {
+    var isPhoto = currentId === 'photo';
     var skinsHtml = SKINS.map(function (sk) {
-      var selected = sk.id === state.skinId;
+      var selected = sk.id === currentId;
       var ring = selected ? ('2px solid ' + d.accent) : '2px solid transparent';
-      var check = selected ? '<div style="position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;font-size:11px;color:#0b1220;font-weight:700;">✓</div>' : '';
-      return '<div data-act="setSkin" data-arg="' + sk.id + '" class="dc-btn" style="border-radius:16px;padding:3px;border:' + ring + ';">'
-        + '<div style="border-radius:14px;height:74px;position:relative;overflow:hidden;background:' + sk.css + ';">' + check + '</div>'
-        + '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:7px;font-family:var(--font-mono);">' + esc(sk.name) + '</div></div>';
+      var check = selected ? '<div style="position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;font-size:10px;color:#0b1220;font-weight:700;">✓</div>' : '';
+      return '<div data-act="' + setAction + '" data-arg="' + sk.id + '" class="dc-btn" style="border-radius:14px;padding:3px;border:' + ring + ';">'
+        + '<div style="border-radius:12px;height:58px;position:relative;overflow:hidden;background:' + sk.css + ';">' + check + '</div>'
+        + '<div style="font-size:10.5px;font-weight:600;text-align:center;margin-top:5px;font-family:var(--font-mono);">' + esc(sk.name) + '</div></div>';
     }).join('');
-    var customGradRing = state.skinId === 'customGradient' ? ('2px solid ' + d.accent) : '2px solid var(--border)';
-    var photoRing = d.skinIsPhoto ? ('2px solid ' + d.accent) : '2px solid var(--border)';
-    var wallpaperThumb = state.wallpaperImg ? ('background-image:url(' + state.wallpaperImg + ');background-size:cover;background-position:center;') : 'background:var(--surface2);';
+    var customGradRing = currentId === 'customGradient' ? ('2px solid ' + d.accent) : '2px solid var(--border)';
+    var photoRing = isPhoto ? ('2px solid ' + d.accent) : '2px solid var(--border)';
+    var wallpaperThumb = currentWallpaperImg ? ('background-image:url(' + currentWallpaperImg + ');background-size:cover;background-position:center;') : 'background:var(--surface2);';
+    return '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' + skinsHtml
+      + '<div data-act="' + setAction + '" data-arg="customGradient" class="dc-btn" style="border-radius:14px;padding:3px;border:' + customGradRing + ';">'
+      + '<div style="border-radius:12px;height:58px;background:' + d.customGradientCss + ';"></div>'
+      + '<div style="font-size:10.5px;font-weight:600;text-align:center;margin-top:5px;">自定义渐变</div></div>'
+      + '<div data-act="' + setAction + '" data-arg="photo" class="dc-btn" style="border-radius:14px;padding:3px;border:' + photoRing + ';">'
+      + '<div style="border-radius:12px;height:58px;overflow:hidden;position:relative;' + wallpaperThumb + '"></div>'
+      + '<div style="font-size:10.5px;font-weight:600;text-align:center;margin-top:5px;">壁纸照片</div></div>'
+      + '</div>'
+      + '<div data-act="' + pickAction + '" class="dc-btn" style="margin-top:8px;text-align:center;font-size:11.5px;color:' + d.accent + ';text-decoration:underline;">上传照片</div>';
+  }
 
+  function renderOverlayThemes(d) {
     var colorInputs = state.customColors.map(function (val, idx) {
       return '<input type="color" value="' + val + '" data-color-idx="' + idx + '" style="width:36px;height:36px;border-radius:50%;border:2px solid var(--border);padding:0;background:none;">';
     }).join('');
@@ -1060,17 +957,16 @@
       + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">'
       + '<div data-act="closeOverlay" class="dc-btn" style="font-size:20px;color:var(--text-mute);width:24px;">✕</div>'
       + '<div style="font-size:15px;font-weight:700;">主题皮肤商店</div><div style="width:24px;"></div></div>'
-      + '<div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">背景皮肤 · 应用于整个 App</div>'
-      + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">' + skinsHtml
-      + '<div data-act="setSkin" data-arg="customGradient" class="dc-btn" style="border-radius:16px;padding:3px;border:' + customGradRing + ';">'
-      + '<div style="border-radius:14px;height:74px;background:' + d.customGradientCss + ';"></div>'
-      + '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:7px;font-family:var(--font-mono);">自定义渐变</div></div>'
-      + '<div data-act="setSkin" data-arg="photo" class="dc-btn" style="border-radius:16px;padding:3px;border:' + photoRing + ';">'
-      + '<div style="border-radius:14px;height:74px;overflow:hidden;position:relative;' + wallpaperThumb + '"></div>'
-      + '<div style="font-size:12px;font-weight:600;text-align:center;margin-top:7px;font-family:var(--font-mono);">自定义壁纸</div></div>'
-      + '</div>'
-      + '<div data-act="pickWallpaper" class="dc-btn" style="margin-top:10px;text-align:center;font-size:12px;color:' + d.accent + ';text-decoration:underline;">上传壁纸照片</div>'
-      + '<div style="font-size:12px;color:var(--text-mute);margin:20px 0 10px;">自定义渐变色盘 · 直接调整5个颜色</div>'
+
+      + '<div style="font-size:12px;font-weight:700;margin-bottom:10px;">🖼️ 整体背景 · 应用于整个 App</div>'
+      + renderSkinGallery(state.pageSkinId, state.pageWallpaperImg, 'setPageSkin', 'pickPageWallpaper', d)
+
+      + '<div style="height:1px;background:var(--border);margin:20px 0;"></div>'
+
+      + '<div style="font-size:12px;font-weight:700;margin-bottom:10px;">📒 记账本封面 · 只应用于首页那张卡片</div>'
+      + renderSkinGallery(state.skinId, state.wallpaperImg, 'setSkin', 'pickWallpaper', d)
+
+      + '<div style="font-size:12px;color:var(--text-mute);margin:22px 0 10px;">自定义渐变色盘 · 直接调整5个颜色（两个背景的"自定义渐变"共用这一套颜色）</div>'
       + '<div style="border-radius:14px;height:36px;margin-bottom:10px;background:' + d.customGradientCss + ';"></div>'
       + '<div style="display:flex;gap:12px;">' + colorInputs + '</div>'
       + '<div style="font-size:12px;color:var(--text-mute);margin:20px 0 10px;">强调色 · 应用于按钮与高亮</div>'
@@ -1123,9 +1019,11 @@
       return '<div data-act="setNewAssetCategory" data-arg="' + c.id + '" class="dc-btn" style="padding:8px 12px;border-radius:100px;font-size:12.5px;font-weight:600;background:' + (on ? d.accent : 'var(--surface2)') + ';color:' + (on ? '#0b1220' : 'var(--text-soft)') + ';white-space:nowrap;">' + c.icon + ' ' + c.name + '</div>';
     }).join('');
     var valueLabel = selectedCat.tracksDep ? '购入价（¥）' : '金额（¥）';
+    var depNote = (selectedCat.tracksDep && selectedCat.depYears)
+      ? ('<div style="font-size:11px;color:var(--text-mute);margin:-6px 0 12px;">按 ' + selectedCat.name + ' 通用折旧标准（直线折旧 · ' + selectedCat.depYears + ' 年），现值会自动算出，不用手动填</div>')
+      : (selectedCat.tracksDep ? '<div style="font-size:11px;color:var(--text-mute);margin:-6px 0 12px;">' + selectedCat.name + '一般不按固定比例折旧，现值按购入价计，如有变化可以之后再调整</div>' : '');
     var depFields = selectedCat.tracksDep
-      ? (fieldRow('当前估值（¥，可留空）', 'newAsset.current', na.current, 'number', '默认等于购入价')
-        + fieldRow('购入日期', 'newAsset.dateStr', na.dateStr, 'date', '')
+      ? (fieldRow('购入日期', 'newAsset.dateStr', na.dateStr, 'date', '')
         + fieldRow('预计已使用次数（可选）', 'newAsset.uses', na.uses, 'number', '用于按次折旧'))
       : '';
     return '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div style="width:36px;height:4px;border-radius:3px;background:var(--track);"></div></div>'
@@ -1136,6 +1034,10 @@
       + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">' + catChips + '</div>'
       + fieldRow('名称', 'newAsset.name', na.name, 'text', selectedCat.tracksDep ? '如：MacBook Pro' : '如：招商银行储蓄卡')
       + fieldRow(valueLabel, 'newAsset.buy', na.buy, 'number', '0')
+      + '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:-6px 0 12px;">' + ['2', '3', '4', '5', '6'].map(function (n) {
+        return '<div data-act="multiplyNewAssetBuy" data-arg="' + n + '" class="dc-btn" style="padding:6px 10px;border-radius:100px;font-size:11.5px;font-weight:700;background:var(--surface2);color:var(--text-soft);">× ' + n + '</div>';
+      }).join('') + '</div>'
+      + depNote
       + depFields
       + '<div data-act="saveNewAsset" class="dc-btn" style="margin-top:16px;border-radius:16px;padding:15px;text-align:center;font-size:15px;font-weight:700;background:' + d.accent + ';color:#0b1220;">保存资产</div>';
   }
@@ -1241,7 +1143,6 @@
     else if (state.tab === 'profile') body = renderProfile(d);
     else if (state.tab === 'budget') body = renderBudget(d);
     else if (state.tab === 'txlist') body = renderTxList(d);
-    else if (state.tab === 'billReview') body = renderBillReview(d);
     else body = renderHome(d);
 
     var html = '<div style="height:100dvh;height:100vh;position:relative;overflow:hidden;font-family:var(--font-display);' + themeVars + 'background:var(--bg);color:var(--text);">'
@@ -1254,8 +1155,8 @@
       + renderToast()
       + '<input type="file" id="avatarFileInput" accept="image/*" style="display:none;">'
       + '<input type="file" id="wallpaperFileInput" accept="image/*" style="display:none;">'
+      + '<input type="file" id="pageWallpaperFileInput" accept="image/*" style="display:none;">'
       + '<input type="file" id="importFileInput" accept="application/json,.json" style="display:none;">'
-      + '<input type="file" id="billFileInput" accept=".csv,text/csv" style="display:none;">'
       + '</div>';
 
     var root = document.getElementById('app');
@@ -1434,6 +1335,15 @@
         return { txAmount: amt + k };
       });
     },
+    multiplyAmount: function (factor) {
+      update(function (s) {
+        var cur = parseFloat(s.txAmount);
+        if (!cur || cur <= 0) { return {}; }
+        var f = parseFloat(factor);
+        var result = Math.round(cur * f * 100) / 100;
+        return { txAmount: String(result) };
+      });
+    },
     saveTx: function () {
       var amt = parseFloat(state.txAmount);
       if (!amt || amt <= 0) { showToast('请输入金额'); return; }
@@ -1463,6 +1373,7 @@
     },
     setAccent: function (h) { update({ accentHue: parseInt(h, 10) }); },
     setSkin: function (id) { update({ skinId: id }); },
+    setPageSkin: function (id) { update({ pageSkinId: id }); },
     setMode: function (m) { update({ mode: m }); },
     setDepMethod: function (arg) {
       var parts = String(arg).split('|'); var id = parts[0], m = parts[1];
@@ -1472,7 +1383,8 @@
       var parts = String(arg).split('|'); var cat = parts[0], delta = parseInt(parts[1], 10);
       update(function (s) {
         var bl = Object.assign({}, s.budgetLimits);
-        bl[cat] = Math.max(100, (bl[cat] || 0) + delta);
+        var cur = (typeof bl[cat] === 'number') ? bl[cat] : 0;
+        bl[cat] = Math.max(0, cur + delta);
         return { budgetLimits: bl };
       });
     },
@@ -1493,6 +1405,15 @@
     setNewAssetCategory: function (id) {
       update(function (s) { return { newAsset: Object.assign({}, s.newAsset, { category: id }) }; });
     },
+    multiplyNewAssetBuy: function (factor) {
+      update(function (s) {
+        var cur = parseFloat(s.newAsset.buy);
+        if (!cur || cur <= 0) return {};
+        var f = parseFloat(factor);
+        var result = Math.round(cur * f * 100) / 100;
+        return { newAsset: Object.assign({}, s.newAsset, { buy: String(result) }) };
+      });
+    },
     saveNewAsset: function () {
       var na = state.newAsset;
       var catInfo = assetCatById(na.category);
@@ -1501,20 +1422,14 @@
       var asset;
       if (!catInfo.tracksDep) {
         // cash / bank deposits: no depreciation tracking needed
-        asset = { id: uid(), name: na.name, category: na.category, buy: buy, current: buy, years: 0, uses: 0 };
+        asset = { id: uid(), name: na.name, category: na.category, buy: buy, purchaseDate: todayISO(), uses: 0 };
       } else {
-        var cur = parseFloat(na.current);
-        if (!cur || cur <= 0) cur = buy;
-        var years = 0.05;
-        if (na.dateStr) {
-          var days = Math.max(1, Math.round((Date.parse(todayISO()) - Date.parse(na.dateStr)) / 86400000));
-          years = Math.max(0.02, +(days / 365).toFixed(2));
-        }
+        var purchaseDate = na.dateStr || todayISO();
         var uses = parseInt(na.uses, 10) || 1;
-        asset = { id: uid(), name: na.name, category: na.category, buy: buy, current: cur, years: years, uses: uses };
+        asset = { id: uid(), name: na.name, category: na.category, buy: buy, purchaseDate: purchaseDate, uses: uses };
       }
       update(function (s) { return { assets: [asset].concat(s.assets), overlay: null }; });
-      showToast('资产已添加');
+      showToast('资产已添加，折旧会按购入价自动计算');
     },
     deleteAsset: function (id) {
       update(function (s) { return { assets: s.assets.filter(function (a) { return String(a.id) !== String(id); }) }; });
@@ -1533,35 +1448,7 @@
     },
     pickAvatar: function () { var el = document.getElementById('avatarFileInput'); if (el) el.click(); },
     pickWallpaper: function () { var el = document.getElementById('wallpaperFileInput'); if (el) el.click(); },
-    pickAlipayBill: function () { state.pendingBillChannel = 'alipay'; var el = document.getElementById('billFileInput'); if (el) el.click(); },
-    pickWechatBill: function () { state.pendingBillChannel = 'wechat'; var el = document.getElementById('billFileInput'); if (el) el.click(); },
-    toggleBillRow: function (idx) {
-      update(function (s) {
-        var rows = s.billRows.slice();
-        var i = parseInt(idx, 10);
-        rows[i] = Object.assign({}, rows[i], { include: !rows[i].include });
-        return { billRows: rows };
-      });
-    },
-    setBillRowCat: function (arg) {
-      var parts = String(arg).split('|'); var idx = parseInt(parts[0], 10); var catId = parts[1];
-      update(function (s) {
-        var rows = s.billRows.slice();
-        rows[idx] = Object.assign({}, rows[idx], { cat: catId });
-        return { billRows: rows };
-      });
-    },
-    confirmBillImport: function () {
-      var chosen = state.billRows.filter(function (r) { return r.include; });
-      if (!chosen.length) { showToast('没有勾选任何记录'); return; }
-      var newTx = chosen.map(function (r) {
-        return { id: uid() + Math.floor(Math.random() * 1000), type: r.type, cat: r.cat, note: r.note, amount: r.amount, date: r.date, channel: r.channel };
-      });
-      update(function (s) { return { transactions: newTx.concat(s.transactions), billRows: [], tab: 'home' }; });
-      showToast('已导入 ' + newTx.length + ' 笔记录');
-    },
-    cancelBillImport: function () { update({ billRows: [], tab: 'profile' }); },
-
+    pickPageWallpaper: function () { var el = document.getElementById('pageWallpaperFileInput'); if (el) el.click(); },
     /* ---- 分类管理 ---- */
     setNewCategoryHue: function (h) { update({ newCategoryHue: parseInt(h, 10) }); },
     addCategory: function () {
@@ -1687,25 +1574,8 @@
       compressImageFile(el.files[0], 800, function (dataUrl) { update({ wallpaperImg: dataUrl, skinId: 'photo' }); });
       return;
     }
-    if (el.id === 'billFileInput' && el.files && el.files[0]) {
-      var channel = state.pendingBillChannel || 'alipay';
-      var freader = new FileReader();
-      freader.onload = function (ev) {
-        try {
-          var buf = ev.target.result;
-          var encoding = channel === 'alipay' ? 'gbk' : 'utf-8';
-          var text;
-          try { text = new TextDecoder(encoding).decode(buf); }
-          catch (encErr) { text = new TextDecoder('utf-8').decode(buf); }
-          var rows = parseBillCsv(text, channel);
-          if (!rows.length) { showToast('没有识别到有效交易，确认文件是官方导出的账单 CSV'); return; }
-          update({ billRows: rows, tab: 'billReview' });
-          showToast('识别到 ' + rows.length + ' 笔交易，请核对后导入');
-        } catch (err) {
-          console.error(err); showToast('账单解析失败，请确认文件格式');
-        }
-      };
-      freader.readAsArrayBuffer(el.files[0]);
+    if (el.id === 'pageWallpaperFileInput' && el.files && el.files[0]) {
+      compressImageFile(el.files[0], 1000, function (dataUrl) { update({ pageWallpaperImg: dataUrl, pageSkinId: 'photo' }); });
       return;
     }
     if (el.id === 'importFileInput' && el.files && el.files[0]) {
@@ -1749,16 +1619,6 @@
       });
       return;
     }
-    var billIdx = el.getAttribute && el.getAttribute('data-bill-idx');
-    if (billIdx != null) {
-      var bi = parseInt(billIdx, 10);
-      update(function (s) {
-        var rows = s.billRows.slice();
-        rows[bi] = Object.assign({}, rows[bi], { cat: el.value });
-        return { billRows: rows };
-      });
-      return;
-    }
     var colorBind = el.getAttribute && el.getAttribute('data-color-idx');
     if (colorBind != null) {
       var idx = parseInt(colorBind, 10);
@@ -1784,7 +1644,7 @@
   }
 
   /* expose for debugging */
-  window.__App = { state: function () { return state; }, update: update, showToast: showToast, parseBillCsv: parseBillCsv };
+  window.__App = { state: function () { return state; }, update: update, showToast: showToast };
 
   document.addEventListener('DOMContentLoaded', function () {
     bindEvents();
