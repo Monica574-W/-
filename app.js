@@ -19,7 +19,9 @@
   var CHANNELS = [
     { id: 'wechat', name: '微信支付' },
     { id: 'alipay', name: '支付宝' },
+    { id: 'alipay2', name: 'Alipay' },
     { id: 'bank', name: '银行卡' },
+    { id: 'octopus', name: '八达通' },
     { id: 'cash', name: '现金' },
     { id: 'other', name: '其他' }
   ];
