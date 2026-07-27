@@ -63,6 +63,12 @@
   /* ---------- 工具函数 ---------- */
   function hue(h, l, c) { return 'oklch(' + l + '% ' + c + ' ' + h + ')'; }
   function fmt(n) { return '¥' + Math.round(n || 0).toLocaleString('zh-CN'); }
+  var CURRENCIES = [
+    { id: 'CNY', symbol: '¥', name: '人民币' },
+    { id: 'HKD', symbol: 'HK$', name: '港币' }
+  ];
+  function currencySymbol(id) { var c = CURRENCIES.filter(function (c) { return c.id === id; })[0]; return c ? c.symbol : '¥'; }
+  function fmtCur(n, currency) { return currencySymbol(currency) + Math.round(n || 0).toLocaleString('zh-CN'); }
   function pad2(n) { return String(n).length < 2 ? '0' + n : String(n); }
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -104,7 +110,7 @@
       userName: '',
       tab: 'home', overlay: null, accentHue: 195, skinId: 'aurora',
       pageSkinId: 'aurora', pageWallpaperImg: null,
-      txType: 'expense', txCategory: null, txAmount: '', txNote: '', txChannel: 'wechat', toast: null,
+      txType: 'expense', txCategory: null, txAmount: '', txNote: '', txChannel: 'wechat', txCurrency: 'CNY', toast: null,
       reportMonthIdx: 5, budgetPeriodIdx: 5,
       depMethods: {}, mode: 'dark', budgetLimits: Object.assign({}, DEFAULT_BUDGET_LIMITS),
       piggyBalance: 0, piggyGoal: 10000, piggyHistory: [],
@@ -205,10 +211,20 @@
     cats().forEach(function (c) { byCat[c.id] = 0; });
     state.transactions.forEach(function (t) {
       if (txMonthKey(t) !== monthKey) return;
+      if ((t.currency || 'CNY') !== 'CNY') return; // 预算/报表/图表以人民币为准，港币单独统计，不混算
       if (t.type === 'income') income += t.amount;
       else { expense += t.amount; byCat[t.cat] = (byCat[t.cat] || 0) + t.amount; }
     });
     return { income: income, expense: expense, byCat: byCat };
+  }
+  function monthStatsHKD(monthKey) {
+    var income = 0, expense = 0;
+    state.transactions.forEach(function (t) {
+      if (txMonthKey(t) !== monthKey) return;
+      if ((t.currency || 'CNY') !== 'HKD') return;
+      if (t.type === 'income') income += t.amount; else expense += t.amount;
+    });
+    return { income: income, expense: expense };
   }
 
   /* 资产折旧：直线折旧法，现值随时间自动重新计算，不需要手动填写 */
@@ -246,6 +262,7 @@
     var months = monthsWindow(6);
     var curKey = months[months.length - 1].key;
     var homeStats = monthStats(curKey);
+    var homeStatsHKD = monthStatsHKD(curKey);
 
     var totalLimit = 0;
     cats().forEach(function (c) { totalLimit += (s.budgetLimits[c.id] || 0); });
@@ -371,7 +388,7 @@
         id: t.id, note: t.note || name, catName: name, date: fmtDate(t.date),
         channelName: channelName(t.channel),
         swatchBg: hue(chue, 38, 0.04),
-        amountFmt: sign + fmt(t.amount),
+        amountFmt: sign + fmtCur(t.amount, t.currency),
         amountColor: t.type === 'income' ? positive : 'oklch(90% 0.01 250)'
       };
     });
@@ -425,6 +442,9 @@
       pageBg: pageBg, pageSkinName: pageSkinName, pageSkinIsPhoto: pageSkinIsPhoto,
       skinIsPhoto: skinIsPhoto, months: months, curKey: curKey,
       monthIncomeFmt: fmt(homeStats.income), monthExpenseFmt: fmt(homeStats.expense), netBalanceFmt: fmt(net),
+      hasHKD: (homeStatsHKD.income > 0 || homeStatsHKD.expense > 0),
+      hkdIncomeFmt: fmtCur(homeStatsHKD.income, 'HKD'), hkdExpenseFmt: fmtCur(homeStatsHKD.expense, 'HKD'),
+      hkdNetFmt: fmtCur(homeStatsHKD.income - homeStatsHKD.expense, 'HKD'),
       budgetPct: budgetPct, budgetPctFmt: budgetPct + '%', budgetBarWidth: Math.min(100, budgetPct) + '%',
       totalLimit: totalLimit, totalSpent: totalSpent,
       assetsTotalFmt: fmt(assetsTotal), assetsBuyFmt: fmt(assetsBuy), assetsDiffFmt: (assetsDiffPct >= 0 ? '+' : '') + assetsDiffPct + '%',
@@ -511,6 +531,14 @@
       + '<div style="font-family:var(--font-mono);font-size:18px;font-weight:700;margin-top:4px;">' + d.assetsTotalFmt + '</div>'
       + '<div style="font-size:11px;color:oklch(66% 0.19 25);margin-top:8px;">较购入 ' + d.assetsDiffFmt + '</div>'
       + '</div></div>'
+
+      + (d.hasHKD ? ('<div style="margin:12px 20px 0;background:var(--surface);border-radius:16px;padding:14px 16px;">'
+        + '<div style="font-size:11px;color:var(--text-mute);margin-bottom:8px;">本月港币收支（单独统计，不计入上方人民币结余）</div>'
+        + '<div style="display:flex;gap:18px;">'
+        + '<div><div style="font-size:10.5px;color:var(--text-mute);">收入</div><div style="font-family:var(--font-mono);font-size:14px;font-weight:700;margin-top:2px;">' + d.hkdIncomeFmt + '</div></div>'
+        + '<div><div style="font-size:10.5px;color:var(--text-mute);">支出</div><div style="font-family:var(--font-mono);font-size:14px;font-weight:700;margin-top:2px;">' + d.hkdExpenseFmt + '</div></div>'
+        + '<div><div style="font-size:10.5px;color:var(--text-mute);">结余</div><div style="font-family:var(--font-mono);font-size:14px;font-weight:700;margin-top:2px;">' + d.hkdNetFmt + '</div></div>'
+        + '</div></div>') : '')
 
       + '<div data-act="setTab" data-arg="report" class="dc-btn" style="margin:12px 20px 0;background:var(--surface);border-radius:16px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;">'
       + '<div style="font-size:13px;font-weight:600;">查看本月完整财务报表</div><div style="font-size:16px;color:var(--text-mute);">›</div></div>'
@@ -828,7 +856,7 @@
         + '<div style="width:34px;height:34px;border-radius:10px;flex-shrink:0;background:' + hue(chue, 38, 0.04) + ';"></div>'
         + '<div style="flex:1;min-width:0;"><div style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(t.note || name) + '</div>'
         + '<div style="font-size:11px;color:var(--text-mute);margin-top:2px;">' + esc(name) + (t.channel ? ' · ' + esc(channelName(t.channel)) : '') + ' · ' + t.date + '</div></div>'
-        + '<div style="font-family:var(--font-mono);font-size:14px;font-weight:700;flex-shrink:0;color:' + amountColor + ';">' + sign + fmt(t.amount) + '</div>'
+        + '<div style="font-family:var(--font-mono);font-size:14px;font-weight:700;flex-shrink:0;color:' + amountColor + ';">' + sign + fmtCur(t.amount, t.currency) + '</div>'
         + '<div data-act="deleteTx" data-arg="' + t.id + '" class="dc-btn" style="font-size:16px;color:var(--text-faint);padding:0 2px 0 4px;">×</div></div>';
     }).join('') : '<div style="padding:24px;text-align:center;color:var(--text-mute);font-size:12.5px;">没有匹配的记录</div>';
 
@@ -893,6 +921,10 @@
       var on = state.txChannel === c.id;
       return '<div data-act="setTxChannel" data-arg="' + c.id + '" class="dc-btn" style="padding:6px 12px;border-radius:100px;font-size:11.5px;font-weight:600;background:' + (on ? d.accent : 'var(--surface2)') + ';color:' + (on ? '#0b1220' : 'var(--text-soft)') + ';">' + c.name + '</div>';
     }).join('');
+    var currencyChips = CURRENCIES.map(function (c) {
+      var on = state.txCurrency === c.id;
+      return '<div data-act="setTxCurrency" data-arg="' + c.id + '" class="dc-btn" style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:' + (on ? d.accent : 'var(--surface2)') + ';color:' + (on ? '#0b1220' : 'var(--text-soft)') + ';">' + c.symbol + ' ' + c.name + '</div>';
+    }).join('');
     var keys = ['1','2','3','4','5','6','7','8','9','.','0','del'];
     var keypad = keys.map(function (k) {
       return '<div data-act="keypadPress" data-arg="' + k + '" class="dc-btn" style="height:50px;border-radius:14px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:600;">' + (k === 'del' ? '⌫' : k) + '</div>';
@@ -908,7 +940,8 @@
       + '<div style="position:absolute;top:4px;bottom:4px;width:calc(50% - 4px);border-radius:100px;transition:transform .2s ease;background:' + segmentBg + ';transform:' + segmentTransform + ';"></div>'
       + '<div data-act="setTxType" data-arg="expense" class="dc-btn" style="flex:1;text-align:center;padding:9px 0;font-size:13.5px;font-weight:700;position:relative;z-index:1;">支出</div>'
       + '<div data-act="setTxType" data-arg="income" class="dc-btn" style="flex:1;text-align:center;padding:9px 0;font-size:13.5px;font-weight:700;position:relative;z-index:1;">收入</div></div>'
-      + '<div style="text-align:center;margin:20px 0 6px;font-family:var(--font-mono);font-size:38px;font-weight:700;color:' + amountColor + ';">¥' + (state.txAmount || '0') + '</div>'
+      + '<div style="display:flex;justify-content:center;gap:8px;margin-top:14px;">' + currencyChips + '</div>'
+      + '<div style="text-align:center;margin:14px 0 6px;font-family:var(--font-mono);font-size:38px;font-weight:700;color:' + amountColor + ';">' + currencySymbol(state.txCurrency) + (state.txAmount || '0') + '</div>'
       + '<div style="display:flex;justify-content:center;gap:8px;margin-bottom:14px;">' + ['2', '3', '4', '5', '6', '7'].map(function (n) {
         return '<div data-act="multiplyAmount" data-arg="' + n + '" class="dc-btn" style="padding:6px 10px;border-radius:100px;font-size:11.5px;font-weight:700;background:var(--surface2);color:var(--text-soft);">× ' + n + '</div>';
       }).join('') + '</div>'
@@ -1316,16 +1349,17 @@
     },
     setTab: function (tab) { update({ tab: tab, overlay: null }); },
     openOverlay: function (name) {
-      if (name === 'add') update({ overlay: 'add', editingTxId: null, txType: 'expense', txCategory: null, txAmount: '', txNote: '', txDateStr: todayISO(), txChannel: 'wechat' });
+      if (name === 'add') update({ overlay: 'add', editingTxId: null, txType: 'expense', txCategory: null, txAmount: '', txNote: '', txDateStr: todayISO(), txChannel: 'wechat', txCurrency: 'CNY' });
       else update({ overlay: name });
     },
     closeOverlay: function () { update({ overlay: null, txAmount: '', txCategory: null, txNote: '', editingTxId: null, pinSetupStage: 'enter', pinSetupFirst: '', pinInput: '', pinError: '' }); },
     editTx: function (id) {
       var tx = state.transactions.filter(function (t) { return String(t.id) === String(id); })[0];
       if (!tx) return;
-      update({ overlay: 'add', editingTxId: tx.id, txType: tx.type, txCategory: tx.cat, txAmount: String(tx.amount), txNote: tx.note || '', txDateStr: tx.date, txChannel: tx.channel || 'wechat' });
+      update({ overlay: 'add', editingTxId: tx.id, txType: tx.type, txCategory: tx.cat, txAmount: String(tx.amount), txNote: tx.note || '', txDateStr: tx.date, txChannel: tx.channel || 'wechat', txCurrency: tx.currency || 'CNY' });
     },
     setTxType: function (t) { update({ txType: t, txCategory: null }); },
+    setTxCurrency: function (c) { update({ txCurrency: c }); },
     setTxCategory: function (id) { update({ txCategory: id }); },
     setTxChannel: function (id) { update({ txChannel: id }); },
     keypadPress: function (k) {
@@ -1352,18 +1386,19 @@
       var cat = state.txCategory || (state.txType === 'expense' ? cats()[0].id : INCOME_CATS[0].id);
       var dateStr = state.txDateStr || todayISO();
       var channel = state.txChannel || 'wechat';
+      var currency = state.txCurrency || 'CNY';
       if (state.editingTxId) {
         update(function (s) {
           var list = s.transactions.map(function (t) {
             if (String(t.id) !== String(s.editingTxId)) return t;
-            return { id: t.id, type: s.txType, cat: cat, note: s.txNote || '', amount: amt, date: dateStr, channel: channel };
+            return { id: t.id, type: s.txType, cat: cat, note: s.txNote || '', amount: amt, date: dateStr, channel: channel, currency: currency };
           });
           return { transactions: list, overlay: null, txAmount: '', txCategory: null, txNote: '', editingTxId: null };
         });
         showToast('记录已更新');
         return;
       }
-      var tx = { id: uid(), type: state.txType, cat: cat, note: state.txNote || '', amount: amt, date: dateStr, channel: channel };
+      var tx = { id: uid(), type: state.txType, cat: cat, note: state.txNote || '', amount: amt, date: dateStr, channel: channel, currency: currency };
       update(function (s) {
         return { transactions: [tx].concat(s.transactions), overlay: null, txAmount: '', txCategory: null, txNote: '' };
       });
